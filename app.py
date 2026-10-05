@@ -1,3 +1,4 @@
+import io
 import streamlit as st
 import cv2
 import numpy as np
@@ -7,7 +8,7 @@ from PIL import Image, ImageOps
 st.set_page_config(page_title="Scanner LJK Presisi - SMP YPI Pulogadung", layout="wide")
 
 st.title("📱 Pemindai LJK Otomatis SMP YPI Pulogadung")
-st.caption("Khusus Format Pilihan Ganda (Fleksibel 30 atau 40 Soal)")
+st.caption("Khusus Format Pilihan Ganda (30 atau 40 Soal + Kompresi Foto Otomatis)")
 
 # ---------------------------------------------------------
 # SIDEBAR: OPSI JUMLAH SOAL, KUNCI JAWABAN & SENSITIVITAS
@@ -33,21 +34,37 @@ st.sidebar.header("🎛️ Sensitivitas Silang")
 delta_thresh = st.sidebar.slider("Sensitivitas Kehitaman Coretan", 5, 50, 15, 1)
 
 # ---------------------------------------------------------
-# FUNGSI OPTIMALISASI & DETEKSI 4 BINGKAI TABEL
+# FUNGSI KOMPRESI FOTO OTOMATIS (~100 KB)
 # ---------------------------------------------------------
-def prepare_image(file_bytes, max_dim=1200):
+def compress_and_prepare_image(file_bytes, max_dim=900, quality=60):
+    """
+    Mengecilkan dimensi dan mengompres foto berukuran MB menjadi ~100 KB
+    secara langsung di RAM sebelum diproses OpenCV.
+    """
     raw_pil = Image.open(file_bytes)
+    
+    # Perbaiki orientasi EXIF jika foto diambil dari kamera HP
     try:
         raw_pil = ImageOps.exif_transpose(raw_pil)
     except Exception:
         pass
 
+    # Resize dimensi gambar
     w, h = raw_pil.size
     if max(w, h) > max_dim:
         scale = max_dim / float(max(w, h))
-        raw_pil = raw_pil.resize((int(w * scale), int(h * scale)), Image.Resampling.LANCZOS)
-        
-    return np.array(raw_pil.convert('RGB'))
+        new_w, new_h = int(w * scale), int(h * scale)
+        raw_pil = raw_pil.resize((new_w, new_h), Image.Resampling.LANCZOS)
+
+    # Kompres kualitas JPEG di RAM
+    buffer = io.BytesIO()
+    raw_pil.convert("RGB").save(buffer, format="JPEG", quality=quality, optimize=True)
+    buffer.seek(0)
+    
+    compressed_pil = Image.open(buffer)
+    size_kb = buffer.getbuffer().nbytes / 1024.0
+    
+    return np.array(compressed_pil), size_kb
 
 def find_and_crop_4_tables(image_np):
     h, w, _ = image_np.shape
@@ -91,9 +108,6 @@ def find_and_crop_4_tables(image_np):
             column_crops.append(resized)
         return column_crops, False
 
-# ---------------------------------------------------------
-# EVALUASI JAWABAN (DENGAN BATAS 30 ATAU 40 SOAL)
-# ---------------------------------------------------------
 def process_4_columns(column_crops, key_answers, total_q=40, sensitivity_delta=15):
     detected_answers = {}
     annotated_crops = []
@@ -109,7 +123,6 @@ def process_4_columns(column_crops, key_answers, total_q=40, sensitivity_delta=1
     for c_idx, q_range in enumerate(col_ranges):
         col_img = column_crops[c_idx].copy()
         
-        # Jika mode 30 soal, beri efek buram/terang pada kolom 4 (Soal 31-40)
         if q_range[0] > total_q:
             overlay = col_img.copy()
             cv2.rectangle(overlay, (0, 0), (col_img.shape[1], col_img.shape[0]), (230, 230, 230), -1)
@@ -197,17 +210,18 @@ uploaded_file = st.file_uploader(
 
 if uploaded_file is not None:
     try:
-        img_np = prepare_image(uploaded_file, max_dim=1200)
+        # Kompresi foto mentah (MB -> KB) di RAM
+        img_np, size_kb = compress_and_prepare_image(uploaded_file, max_dim=900, quality=60)
+        
+        # Deteksi & Potong 4 Tabel Utama
         col_crops, is_auto = find_and_crop_4_tables(img_np)
         
+        # Hitung Jawaban & Nilai
         score, correct_count, results, annotated_crops = process_4_columns(
             col_crops, key_dict, num_questions, delta_thresh
         )
         
-        if is_auto:
-            st.success("✅ Bingkai LJK berhasil terisolasi secara otomatis!")
-        else:
-            st.info("ℹ️ Menggunakan pemotongan area standar LJK SMP YPI.")
+        st.success(f"⚡ Foto berhasil dikompresi menjadi **{size_kb:.1f} KB** & diproses instan!")
 
         st.subheader("🔍 Visualisasi Pembacaan Per Kolom")
         c1, c2, c3, c4 = st.columns(4)
