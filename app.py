@@ -4,148 +4,139 @@ import numpy as np
 import pandas as pd
 from PIL import Image
 
-st.set_page_config(page_title="Auto-Scan LJK - SMP YPI Pulogadung", layout="wide")
+st.set_page_config(page_title="Scanner LJK Presisi - SMP YPI Pulogadung", layout="wide")
 
-st.markdown("""
-    <style>
-    div[data-testid="stCameraInput"] {
-        position: relative;
-        border-radius: 12px;
-        overflow: hidden;
-    }
-    div[data-testid="stCameraInput"]::before {
-        content: "🎯 PASTIKAN SOAL 1 (KIRI ATAS) DAN SOAL 40 (KANAN BAWAH) MASUK DALAM BINGKAI";
-        position: absolute;
-        top: 6%;
-        left: 4%;
-        width: 92%;
-        height: 84%;
-        border: 3px dashed #00FF00;
-        border-radius: 12px;
-        box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.40);
-        z-index: 99;
-        pointer-events: none;
-        color: #00FF00;
-        font-weight: bold;
-        font-size: 13px;
-        text-align: center;
-        padding-top: 10px;
-        background: rgba(0, 255, 0, 0.05);
-        box-sizing: border-box;
-    }
-    </style>
-""", unsafe_allow_html=True)
-
-st.title("📱 Pemindai LJK Otomatis (Anchor Soal 1 & 40)")
-st.caption("Khusus Format LJK SMP YPI Pulogadung (40 Soal Pilihan Ganda)")
+st.title("📱 Pemindai LJK Otomatis (Presisi Multi-Blok)")
+st.caption("Khusus Format LJK SMP YPI Pulogadung (40 Soal Pilihan Ganda - 4 Kolom)")
 
 # ---------------------------------------------------------
-# DETEKSI ANCHOR OTOMATIS (SOAL 1 & SOAL 40)
+# DETEKSI 4 BLOK KOLOM TABEL LJK SECARA TERPISAH
 # ---------------------------------------------------------
-def detect_q1_q40_anchors(image_np):
-    """
-    Mendeteksi struktur garis tabel LJK untuk mengunci:
-    - Patokan 1: Pojok Kiri Atas (Soal 1) -> (xmin, ymin)
-    - Patokan 2: Pojok Kanan Bawah (Soal 40) -> (xmax, ymax)
-    """
+def detect_and_crop_4_columns(image_np):
     h, w, _ = image_np.shape
     gray = cv2.cvtColor(image_np, cv2.COLOR_RGB2GRAY)
     
-    # Thresholding untuk ekstraksi garis hitam LJK
-    _, thresh = cv2.threshold(gray, 180, 255, cv2.THRESH_BINARY_INV)
+    # Preprocessing: Blur & Adaptive Threshold
+    blur = cv2.GaussianBlur(gray, (5, 5), 0)
+    thresh = cv2.adaptiveThreshold(blur, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, 11, 2)
     
-    # Deteksi Garis Horizontal & Vertikal menggunakan Morphological Ops
-    kernel_h = cv2.getStructuringElement(cv2.MORPH_RECT, (25, 1))
-    kernel_v = cv2.getStructuringElement(cv2.MORPH_RECT, (1, 25))
+    # Batasi area pencarian di wilayah tengah foto (Pilihan Ganda: 22% - 60% tinggi)
+    mask = np.zeros_like(thresh)
+    mask[int(h * 0.22):int(h * 0.60), int(w * 0.03):int(w * 0.97)] = 255
+    masked_thresh = cv2.bitwise_and(thresh, thresh, mask=mask)
     
-    horiz = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel_h)
-    vert = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel_v)
+    contours, _ = cv2.findContours(masked_thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     
-    # Gabungkan struktur garis tabel
-    table_grid = cv2.add(horiz, vert)
-    
-    # Cari kontur garis di area tengah gambar (Pilihan Ganda berada di 20%-65% tinggi foto)
-    roi_mask = np.zeros_like(table_grid)
-    roi_mask[int(h * 0.20):int(h * 0.65), int(w * 0.02):int(w * 0.98)] = 255
-    masked_grid = cv2.bitwise_and(table_grid, table_grid, mask=roi_mask)
-    
-    contours, _ = cv2.findContours(masked_grid, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    
-    valid_boxes = []
+    candidates = []
     for c in contours:
         x, y, bw, bh = cv2.boundingRect(c)
-        if bw > 30 and bh > 10:  # Filter noise kecil
-            valid_boxes.append((x, y, x + bw, y + bh))
-            
-    if len(valid_boxes) > 0:
-        # Tentukan Bounding Box terluar yang membungkus seluruh tabel (Soal 1 s.d. Soal 40)
-        xmin = min([b[0] for b in valid_boxes])
-        ymin = min([b[1] for b in valid_boxes])
-        xmax = max([b[2] for b in valid_boxes])
-        ymax = max([b[3] for b in valid_boxes])
+        aspect_ratio = bh / float(bw) if bw > 0 else 0
+        area = bw * bh
         
-        # Crop & Resize ke resolusi standar (1200 x 500 px)
-        cropped = image_np[ymin:ymax, xmin:xmax]
-        resized = cv2.resize(cropped, (1200, 500))
-        return resized, True, (xmin, ymin, xmax, ymax)
+        # Filter kontur yang mirip dengan bentuk 1 blok kolom (10 soal)
+        if area > (w * h * 0.01) and 1.2 <= aspect_ratio <= 3.5:
+            candidates.append((x, y, bw, bh))
+            
+    # Urutkan kontur dari kiri ke kanan berdasarkan koordinat X
+    candidates = sorted(candidates, key=lambda b: b[0])
+    
+    column_crops = []
+    
+    # Jika berhasil menemukan setidaknya 4 blok kolom
+    if len(candidates) >= 4:
+        # Ambil 4 kontur terbaik dengan posisi Y yang sejajar
+        selected_boxes = candidates[:4]
+        for box in selected_boxes:
+            x, y, bw, bh = box
+            crop = image_np[y:y+bh, x:x+bw]
+            resized = cv2.resize(crop, (250, 500))
+            column_crops.append(resized)
+        return column_crops, True
     else:
-        # Fallback Crop jika foto sangat redup
-        crop = image_np[int(h * 0.25):int(h * 0.55), int(w * 0.04):int(w * 0.96)]
-        resized = cv2.resize(crop, (1200, 500))
-        return resized, False, (0, 0, 0, 0)
+        # Fallback Matatis: Jika pencahayaan redup, bagi area Pilihan Ganda menjadi 4 bagian presisi
+        roi_y1, roi_y2 = int(h * 0.27), int(h * 0.53)
+        roi_x1, roi_x2 = int(w * 0.04), int(w * 0.96)
+        
+        roi_w = (roi_x2 - roi_x1) / 4.0
+        for i in range(4):
+            cx1 = int(roi_x1 + (i * roi_w))
+            cx2 = int(roi_x1 + ((i + 1) * roi_w))
+            crop = image_np[roi_y1:roi_y2, cx1:cx2]
+            resized = cv2.resize(crop, (250, 500))
+            column_crops.append(resized)
+        return column_crops, False
 
 # ---------------------------------------------------------
-# EVALUASI MATRIX JAWABAN (10 BARIS x 4 KOLOM UTAMA)
+# EVALUASI JAWABAN DENGAN METODE RELATIVE DENSITY (SELISIH KEHITAMAN)
 # ---------------------------------------------------------
-def process_anchored_grid(warped_img, key_answers, sensitivity=110, min_pixels=45):
-    gray = cv2.cvtColor(warped_img, cv2.COLOR_RGB2GRAY)
-    _, binary = cv2.threshold(gray, sensitivity, 255, cv2.THRESH_BINARY_INV)
-    
-    h, w = binary.shape
-    col_w = w / 4.0   # 4 Kolom Utama (1-10, 11-20, 21-30, 31-40)
-    row_h = h / 10.0  # 10 Baris Soal
-    
-    col_ranges = [
-        range(1, 11),   # Col 1: Soal 1-10
-        range(11, 21),  # Col 2: Soal 11-20
-        range(21, 31),  # Col 3: Soal 21-30
-        range(31, 41)   # Col 4: Soal 31-40
-    ]
-    options = ['A', 'B', 'C', 'D']
-    
+def process_4_columns(column_crops, key_answers, sensitivity_delta=15):
     detected_answers = {}
-    annotated_img = warped_img.copy()
+    annotated_crops = []
+    
+    options = ['A', 'B', 'C', 'D']
+    col_ranges = [
+        range(1, 11),   # Kolom 1
+        range(11, 21),  # Kolom 2
+        range(21, 31),  # Kolom 3
+        range(31, 41)   # Kolom 4
+    ]
     
     for c_idx, q_range in enumerate(col_ranges):
-        col_x_start = c_idx * col_w
+        col_img = column_crops[c_idx].copy()
+        gray = cv2.cvtColor(col_img, cv2.COLOR_RGB2GRAY)
+        
+        # Binerisasi untuk mengisolasi coretan pensil/pulpen
+        _, binary = cv2.threshold(gray, 120, 255, cv2.THRESH_BINARY_INV)
+        
+        h, w = binary.shape
+        row_h = h / 10.0
+        sub_col_w = w / 5.0  # Sub-kolom 0: No, Sub-kolom 1-4: A, B, C, D
         
         for r_idx, q_num in enumerate(q_range):
             row_y_start = r_idx * row_h
-            sub_col_w = col_w / 5.0  # 1 Sub-kolom No + 4 Sub-kolom Opsi (A, B, C, D)
             
-            max_pixels = 0
-            selected_option = "-"
+            densities = []
+            cell_coords = []
             
-            for opt_idx, opt_label in enumerate(options):
-                # Opsi A-D berada di sub-kolom ke 2-5 (indeks 1-4)
-                x1 = int(col_x_start + ((opt_idx + 1) * sub_col_w) + (sub_col_w * 0.18))
-                x2 = int(col_x_start + ((opt_idx + 2) * sub_col_w) - (sub_col_w * 0.18))
-                y1 = int(row_y_start + (row_h * 0.18))
-                y2 = int(row_y_start + row_h - (row_h * 0.18))
+            for opt_idx in range(4):
+                # Koordinat sel A, B, C, D
+                x1 = int(((opt_idx + 1) * sub_col_w) + (sub_col_w * 0.15))
+                x2 = int(((opt_idx + 2) * sub_col_w) - (sub_col_w * 0.15))
+                y1 = int(row_y_start + (row_h * 0.15))
+                y2 = int(row_y_start + row_h - (row_h * 0.15))
+                
+                cell_coords.append((x1, y1, x2, y2))
                 
                 cell = binary[y1:y2, x1:x2]
                 pixel_count = cv2.countNonZero(cell) if cell.size > 0 else 0
-                
-                color = (0, 255, 0) if pixel_count > min_pixels else (200, 200, 200)
-                cv2.rectangle(annotated_img, (x1, y1), (x2, y2), color, 1)
-                
-                if pixel_count > min_pixels and pixel_count > max_pixels:
-                    max_pixels = pixel_count
-                    selected_option = opt_label
-                    
+                densities.append(pixel_count)
+            
+            max_val = max(densities)
+            max_idx = densities.index(max_val)
+            
+            # Hitung rata-rata kehitaman sel lainnya pada baris yang sama
+            other_vals = [v for i, v in enumerate(densities) if i != max_idx]
+            avg_others = np.mean(other_vals) if len(other_vals) > 0 else 0
+            
+            selected_option = "-"
+            # Jika sel tergelap memiliki selisih kehitaman signifikan di atas sel lainnya
+            if (max_val - avg_others) > sensitivity_delta:
+                selected_option = options[max_idx]
+            
             detected_answers[q_num] = selected_option
+            
+            # Gambarkan indikator visual pada sel
+            for opt_idx, (x1, y1, x2, y2) in enumerate(cell_coords):
+                if opt_idx == max_idx and selected_option != "-":
+                    color = (0, 255, 0)  # Hijau jika terdeteksi jawaban
+                    cv2.rectangle(col_img, (x1, y1), (x2, y2), color, 2)
+                else:
+                    color = (200, 200, 200)  # Abu-abu untuk sel kosong
+                    cv2.rectangle(col_img, (x1, y1), (x2, y2), color, 1)
+                    
+        annotated_crops.append(col_img)
 
-    # Hitung Nilai
+    # Perhitungan Skor Akhir
     score_correct = 0
     results = []
     
@@ -159,16 +150,16 @@ def process_anchored_grid(warped_img, key_answers, sensitivity=110, min_pixels=4
             
         results.append({
             "No": q_num,
-            "Jawaban": user_ans,
-            "Kunci": key_ans,
-            "Hasil": "✅" if is_correct else "❌"
+            "Jawaban Siswa": user_ans,
+            "Kunci Jawaban": key_ans,
+            "Status": "✅ Benar" if is_correct else "❌ Salah"
         })
         
     final_score = (score_correct / 40.0) * 100.0
-    return final_score, score_correct, results, annotated_img
+    return final_score, score_correct, results, annotated_crops
 
 # ---------------------------------------------------------
-# STREAMLIT UI
+# INTERFACE STREAMLIT
 # ---------------------------------------------------------
 st.sidebar.header("⚙️ Kunci Jawaban (40 Soal)")
 key_dict = {}
@@ -178,49 +169,49 @@ for i in range(1, 41):
     key_dict[i] = col_target.selectbox(f"Soal {i}", ['A', 'B', 'C', 'D'], index=0, key=f"k_{i}")
 
 st.sidebar.markdown("---")
-st.sidebar.header("🎛️ Ambang Toleransi")
-threshold_val = st.sidebar.slider("Kehitaman Pensil/Coretan", 50, 200, 110)
-min_pixel_val = st.sidebar.slider("Ukuran Coretan Minimal", 20, 150, 45)
+st.sidebar.header("🎛️ Sensitivitas Deteksi Silang")
+delta_thresh = st.sidebar.slider("Kontras Kehitaman Coretan (Delta)", 5, 50, 15, 1, 
+                                 help="Kecilkan nilai jika coretan pensil tipis, naikkan jika terdeteksi ganda.")
 
-option_input = st.radio("Pilih Metode Pemindaian:", ["📷 Pakai Kamera HP Live", "📁 Unggah File Foto"], horizontal=True)
-
-uploaded_file = None
-if option_input == "📷 Pakai Kamera HP Live":
-    uploaded_file = st.camera_input("Arahkan kamera ke kertas LJK")
-else:
-    uploaded_file = st.file_uploader("Unggah file foto LJK (JPG / PNG)", type=['jpg', 'jpeg', 'png'])
+uploaded_file = st.file_uploader("📷 Unggah / Ambil Foto LJK", type=['jpg', 'jpeg', 'png'])
 
 if uploaded_file is not None:
     try:
         pil_image = Image.open(uploaded_file)
         img_np = np.array(pil_image.convert('RGB'))
         
-        # 1. Deteksi Anchor Soal 1 & Soal 40
-        anchored_grid, is_auto, coords = detect_q1_q40_anchors(img_np)
+        # 1. Deteksi & Potong 4 Kolom Tabel
+        col_crops, is_auto = detect_and_crop_4_columns(img_np)
         
-        # 2. Proses Evaluasi Jawaban
-        score, correct_count, results, annotated_grid = process_anchored_grid(
-            anchored_grid, key_dict, threshold_val, min_pixel_val
+        # 2. Evaluasi Kehitaman Relatif Jawaban
+        score, correct_count, results, annotated_crops = process_4_columns(
+            col_crops, key_dict, delta_thresh
         )
         
         if is_auto:
-            st.success(f"✅ Titik Acuan Terkunci! (Patokan Soal 1: Kiri-Atas [{coords[0]},{coords[1]}], Soal 40: Kanan-Bawah [{coords[2]},{coords[3]}])")
+            st.success("✅ 4 Blok Tabel LJK berhasil terdeteksi dan dipisah secara presisi!")
         else:
-            st.info("ℹ️ Menggunakan pemotongan area estimasi standar.")
+            st.info("ℹ️ Menggunakan pemotongan grid 4 kolom standar.")
 
-        c1, c2 = st.columns([1.2, 1])
+        # Tampilkan 4 Kolom Hasil Scan
+        st.subheader("🔍 Visualisasi Pembacaan Per Kolom")
+        c1, c2, c3, c4 = st.columns(4)
+        c1.image(annotated_crops[0], caption="Soal 1 - 10", use_container_width=True)
+        c2.image(annotated_crops[1], caption="Soal 11 - 20", use_container_width=True)
+        c3.image(annotated_crops[2], caption="Soal 21 - 30", use_container_width=True)
+        c4.image(annotated_crops[3], caption="Soal 31 - 40", use_container_width=True)
         
-        with c1:
-            st.subheader("🔍 Matriks Terdeteksi (Soal 1 s.d. 40)")
-            st.image(annotated_grid, use_container_width=True, caption="Kotak Hijau = Coretan 'X' Terbaca Sistem")
-            
-        with c2:
-            st.subheader("📊 Ringkasan Nilai")
+        st.markdown("---")
+        st.subheader("📊 Hasil Ringkasan Nilai")
+        res_col1, res_col2 = st.columns([1, 2])
+        
+        with res_col1:
             st.metric("Nilai Akhir", f"{score:.1f}")
-            st.write(f"**Jumlah Benar:** {correct_count} / 40 Soal")
+            st.write(f"**Jumlah Benar:** {correct_count} dari 40 Soal")
             
+        with res_col2:
             df_res = pd.DataFrame(results)
-            st.dataframe(df_res, height=350, use_container_width=True)
+            st.dataframe(df_res, height=300, use_container_width=True)
 
     except Exception as e:
         st.error(f"Gagal memproses gambar: {str(e)}")
