@@ -6,8 +6,44 @@ from PIL import Image
 
 st.set_page_config(page_title="Auto-Scan LJK EvalBee - SMP YPI Pulogadung", layout="wide")
 
+# ---------------------------------------------------------
+# SUNTIKAN CSS: BINGKAI & GRID PANDUAN KAMERA HP
+# ---------------------------------------------------------
+st.markdown("""
+    <style>
+    /* Pembungkus Kamera */
+    div[data-testid="stCameraInput"] {
+        position: relative;
+        border-radius: 12px;
+        overflow: hidden;
+    }
+    
+    /* Overlay Bingkai Target Scanner */
+    div[data-testid="stCameraInput"]::before {
+        content: "🎯 POSISIKAN TABEL PILIHAN GANDA DI DALAM BINGKAI HIJAU";
+        position: absolute;
+        top: 20%;
+        left: 5%;
+        width: 90%;
+        height: 38%;
+        border: 3px dashed #00FF00;
+        border-radius: 8px;
+        box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.45);
+        z-index: 99;
+        pointer-events: none;
+        color: #00FF00;
+        font-weight: bold;
+        font-size: 13px;
+        text-align: center;
+        padding-top: 8px;
+        background: rgba(0, 255, 0, 0.08);
+        box-sizing: border-box;
+    }
+    </style>
+""", unsafe_allow_html=True)
+
 st.title("📱 Pemindai LJK Otomatis (EvalBee Mode)")
-st.caption("Deteksi Otomatis Sudut Tabel, Meluruskan Kemiringan Foto, & Mengoreksi Jawaban")
+st.caption("Khusus Format LJK SMP YPI Pulogadung (40 Soal Pilihan Ganda)")
 
 # ---------------------------------------------------------
 # FUNGSI PERSPECTIVE TRANSFORM (MELURUSKAN GAMBAR OTOMATIS)
@@ -29,7 +65,6 @@ def auto_align_table(image_np):
     blur = cv2.GaussianBlur(gray, (5, 5), 0)
     thresh = cv2.adaptiveThreshold(blur, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, 11, 2)
     
-    # Cari semua kontur pada gambar
     contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     contours = sorted(contours, key=cv2.contourArea, reverse=True)
     
@@ -37,22 +72,19 @@ def auto_align_table(image_np):
     for c in contours:
         peri = cv2.arcLength(c, True)
         approx = cv2.approxPolyDP(c, 0.02 * peri, True)
-        # Cari kontur segi empat dengan luas yang memadai
         if len(approx) == 4 and cv2.contourArea(c) > (image_np.shape[0] * image_np.shape[1] * 0.1):
             table_corner = approx.reshape(4, 2)
             break
             
-    # Jika kontur tabel ditemukan, lakukan auto-warp
     if table_corner is not None:
         pts1 = order_points(table_corner)
-        maxWidth, maxHeight = 1000, 450  # Ukuran standar grid terpangkas
+        maxWidth, maxHeight = 1000, 450
         pts2 = np.float32([[0, 0], [maxWidth, 0], [maxWidth, maxHeight], [0, maxHeight]])
         
         M = cv2.getPerspectiveTransform(pts1, pts2)
         warped = cv2.warpPerspective(image_np, M, (maxWidth, maxHeight))
         return warped, True
     else:
-        # Jika gagal deteksi otomatis (misal foto terlalu redup), pangkas estimasi tengah
         h, w, _ = image_np.shape
         crop = image_np[int(h*0.27):int(h*0.52), int(w*0.04):int(w*0.96)]
         resized = cv2.resize(crop, (1000, 450))
@@ -70,10 +102,10 @@ def process_warped_ljk(warped_img, key_answers, sensitivity=110, min_pixels=45):
     row_h = h / 10.0
     
     col_ranges = [
-        range(1, 11),   # 1-10
-        range(11, 21),  # 11-20
-        range(21, 31),  # 21-30
-        range(31, 41)   # 31-40
+        range(1, 11),
+        range(11, 21),
+        range(21, 31),
+        range(31, 41)
     ]
     options = ['A', 'B', 'C', 'D']
     
@@ -85,13 +117,12 @@ def process_warped_ljk(warped_img, key_answers, sensitivity=110, min_pixels=45):
         
         for r_idx, q_num in enumerate(q_range):
             row_y_start = r_idx * row_h
-            sub_col_w = col_w / 5.0  # 1 Kolom No + 4 Kolom Opsi (A,B,C,D)
+            sub_col_w = col_w / 5.0
             
             max_pixels = 0
             selected_option = "-"
             
             for opt_idx, opt_label in enumerate(options):
-                # Opsi A-D berada di sub-kolom ke 2-5 (indeks 1-4)
                 x1 = int(col_x_start + ((opt_idx + 1) * sub_col_w) + (sub_col_w * 0.20))
                 x2 = int(col_x_start + ((opt_idx + 2) * sub_col_w) - (sub_col_w * 0.20))
                 y1 = int(row_y_start + (row_h * 0.20))
@@ -100,7 +131,6 @@ def process_warped_ljk(warped_img, key_answers, sensitivity=110, min_pixels=45):
                 cell = binary[y1:y2, x1:x2]
                 pixel_count = cv2.countNonZero(cell) if cell.size > 0 else 0
                 
-                # Gambar indikator visual
                 color = (0, 255, 0) if pixel_count > min_pixels else (200, 200, 200)
                 cv2.rectangle(annotated_img, (x1, y1), (x2, y2), color, 1)
                 
@@ -110,7 +140,6 @@ def process_warped_ljk(warped_img, key_answers, sensitivity=110, min_pixels=45):
                     
             detected_answers[q_num] = selected_option
 
-    # Perhitungan Skor
     score_correct = 0
     results = []
     
@@ -147,17 +176,23 @@ st.sidebar.header("🎛️ Ambang Toleransi")
 threshold_val = st.sidebar.slider("Kehitaman Pensil/Coretan", 50, 200, 110)
 min_pixel_val = st.sidebar.slider("Ukuran Coretan Minimal", 20, 150, 45)
 
-uploaded_file = st.file_uploader("📷 Ambil / Unggah Foto LJK", type=['jpg', 'jpeg', 'png'])
+# Pilihan Mode Ambil Foto
+option_input = st.radio("Pilih Metode Pemindaian:", ["📷 Pakai Kamera HP Live", "📁 Unggah File Foto"], horizontal=True)
+
+uploaded_file = None
+
+if option_input == "📷 Pakai Kamera HP Live":
+    uploaded_file = st.camera_input("Arahkan kamera ke kertas LJK")
+else:
+    uploaded_file = st.file_uploader("Unggah file foto LJK (JPG / PNG)", type=['jpg', 'jpeg', 'png'])
 
 if uploaded_file is not None:
     try:
         pil_image = Image.open(uploaded_file)
         img_np = np.array(pil_image.convert('RGB'))
         
-        # 1. Meluruskan & Memotong Grid secara Otomatis
         warped_grid, is_auto = auto_align_table(img_np)
         
-        # 2. Proses Deteksi Jawaban
         score, correct_count, results, annotated_grid = process_warped_ljk(
             warped_grid, key_dict, threshold_val, min_pixel_val
         )
@@ -183,5 +218,3 @@ if uploaded_file is not None:
 
     except Exception as e:
         st.error(f"Gagal memproses gambar: {str(e)}")
-else:
-    st.info("Unggah foto LJK. Sistem akan mendeteksi dan meluruskan posisi tabel secara otomatis.")
