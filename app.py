@@ -3,21 +3,16 @@ import numpy as np
 import pandas as pd
 from PIL import Image, ImageOps
 
-# 1. Konfigurasi Halaman Streamlit
-st.set_page_config(page_title="Koreksi LJK - SMP YPI Pulogadung", layout="wide")
+st.set_page_config(page_title="Koreksi LJK Otomatis", layout="wide")
 
 st.title("📋 Aplikasi Koreksi LJK Otomatis")
-st.caption("Khusus Format LJK SMP YPI Pulogadung (40 Soal Pilihan Ganda - Model Silang)")
+st.caption("Khusus Format LJK SMP YPI Pulogadung (40 Soal Pilihan Ganda - Tanda Silang)")
 
-# 2. Fungsi Pemrosesan Gambar LJK
 def process_ljk(pil_img, key_answers, threshold_val=110):
-    # Ubah gambar ke skala abu-abu (grayscale)
     gray = ImageOps.grayscale(pil_img)
     img_np = np.array(gray)
     
     h, w = img_np.shape
-    
-    # Area Grid Pilihan Ganda (25% - 55% dari tinggi kertas)
     grid_top = int(h * 0.25)
     grid_bottom = int(h * 0.55)
     grid_left = int(w * 0.05)
@@ -29,19 +24,17 @@ def process_ljk(pil_img, key_answers, threshold_val=110):
     if roi_h == 0 or roi_w == 0:
         return 0, 0, []
 
-    # Binerisasi: Piksel di bawah nilai threshold diidentifikasi sebagai coretan/pensil
     binary_roi = (roi < threshold_val).astype(np.uint8)
 
-    # 4 Kolom x 10 Baris Soal
     col_width = roi_w / 4.0
     row_height = roi_h / 10.0
     
     detected_answers = {}
     col_ranges = [
-        range(1, 11),   # Soal 1 - 10
-        range(11, 21),  # Soal 11 - 20
-        range(21, 31),  # Soal 21 - 30
-        range(31, 41)   # Soal 31 - 40
+        range(1, 11),
+        range(11, 21),
+        range(21, 31),
+        range(31, 41)
     ]
     options = ['A', 'B', 'C', 'D']
     
@@ -63,7 +56,6 @@ def process_ljk(pil_img, key_answers, threshold_val=110):
                 y1 = int(row_y_start + (row_height * 0.15))
                 y2 = int(row_y_start + row_height - (row_height * 0.15))
                 
-                # Batasi koordinat agar tidak keluar dari gambar
                 x1, x2 = max(0, x1), min(roi_w, x2)
                 y1, y2 = max(0, y1), min(roi_h, y2)
                 
@@ -71,14 +63,12 @@ def process_ljk(pil_img, key_answers, threshold_val=110):
                 
                 if cell.size > 0:
                     pixel_count = np.sum(cell)
-                    # Jika jumlah piksel hitam memenuhi syarat, catat opsi tersebut
                     if pixel_count > 20 and pixel_count > max_pixels:
                         max_pixels = pixel_count
                         selected_option = opt_label
             
             detected_answers[q_num] = selected_option
 
-    # 3. Perhitungan Skor
     score_correct = 0
     results = []
     
@@ -100,7 +90,6 @@ def process_ljk(pil_img, key_answers, threshold_val=110):
     final_score = (score_correct / 40.0) * 100.0
     return final_score, score_correct, results
 
-# 3. Antarmuka Pengguna (UI) Sidebar & Form
 st.sidebar.header("⚙️ Pengaturan Kunci Jawaban")
 
 key_dict = {}
@@ -116,7 +105,6 @@ for i in range(1, 41):
 
 threshold_sensitivity = st.sidebar.slider("Sensitivitas Deteksi Silang", 50, 200, 110, 5)
 
-# 4. Upload Foto LJK & Tampilkan Hasil
 uploaded_file = st.file_uploader("Unggah Foto Lembar Jawaban LJK (JPG / PNG)", type=['jpg', 'jpeg', 'png'])
 
 if uploaded_file is not None:
