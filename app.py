@@ -1,46 +1,157 @@
 import io
+import base64
+import streamlit as st
+import streamlit.components.v1 as components
+import cv2
+import numpy as np
+import pandas as pd
+from PIL import Image
+
+st.set_page_config(page_title="Scanner LJK Fast - SMP YPI Pulogadung", layout="wide")
+
+st.title("⚡ Pemindai LJK Otomatis (Kompresi HP Instan)")
+st.caption("Khusus Format LJK SMP YPI Pulogadung (40 Soal Pilihan Ganda - 4 Kolom)")
+
+# ---------------------------------------------------------
+# KOMPONEN JAVASCRIPT: KOMPRESI DI HP SEBELUM UPLOAD
+# ---------------------------------------------------------
+def client_side_camera_uploader():
+    html_code = """
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <script src="https://cdn.jsdelivr.net/npm/streamlit-component-lib@1.4.0/dist/streamlit-component-lib.js"></script>
+        <style>
+            body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, sans-serif; }
+            .upload-btn {
+                display: block;
+                width: 100%;
+                background: linear-gradient(135deg, #2563eb, #1d4ed8);
+                color: white;
+                text-align: center;
+                padding: 14px 0;
+                font-size: 16px;
+                font-weight: 600;
+                border-radius: 10px;
+                cursor: pointer;
+                box-shadow: 0 4px 10px rgba(37, 99, 235, 0.25);
+                transition: all 0.2s ease;
+            }
+            .upload-btn:active { transform: scale(0.98); }
+            #status { margin-top: 8px; font-size: 13px; color: #4b5563; text-align: center; }
+        </style>
+    </head>
+    <body>
+        <label for="cam" class="upload-btn">📷 AMBIL FOTO LJK (KOMPRES INSTAN HP)</label>
+        <input type="file" id="cam" accept="image/*" capture="environment" style="display:none;" onchange="compressAndSend(event)">
+        <div id="status"></div>
+
+        <script>
+        function compressAndSend(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+
+            document.getElementById('status').innerHTML = "⚡ <i>Mengompres foto di memori HP...</i>";
+
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                const img = new Image();
+                img.onload = function() {
+                    const canvas = document.createElement('canvas');
+                    const maxDim = 1000; // Batas dimensi maksimal 1000px
+                    let w = img.width;
+                    let h = img.height;
+
+                    if (w > h) {
+                        if (w > maxDim) { h = Math.round(h * maxDim / w); w = maxDim; }
+                    } else {
+                        if (h > maxDim) { w = Math.round(w * maxDim / h); h = maxDim; }
+                    }
+
+                    canvas.width = w;
+                    canvas.height = h;Penyebab utama proses *loading* masih terasa lama adalah **lokasi kompresinya**. 
+
+Jika menggunakan `st.file_uploader` lalu memotret via kamera bawaan HP, HP akan mengambil foto resolusi penuh (8–12 MB). File 10 MB tersebut **harus diunggah dulu seluruhnya melalui koneksi internet seluler** ke server Streamlit Cloud, baru kemudian kode Python mengecilkannya. Proses mengunggah 10 MB inilah yang memakan waktu lama.
+
+---
+
+### Solusi: Kompresi di HP (*Client-Side*) Sebelum Terkirim
+
+Untuk mengatasinya, kita menggunakan `st.camera_input` (kamera browser *live*). 
+
+Saat memotret langsung dari komponen kamera browser ini:
+1. Browser HP akan menangkap *frame* dari kamera dan **langsung mengecilkannya di dalam HP/browser** (*Canvas HTML5*).
+2. File yang dikirimkan ke server Streamlit Cloud hanya berukuran **~200–300 KB** (bukan 10 MB).
+3. Pengiriman data melalui internet menjadi instan (kurang dari 1 detik).
+
+---
+
+### Kode Terbarukan `app.py` (Kamera Live Ringan Instan)
+
+Ganti isi file `app.py` di GitHub Anda dengan kode berikut:
+
+```python
 import streamlit as st
 import cv2
 import numpy as np
 import pandas as pd
 from PIL import Image, ImageOps
 
-st.set_page_config(page_title="Scanner LJK Ringan - SMP YPI Pulogadung", layout="wide")
+st.set_page_config(page_title="Scanner LJK Instan - SMP YPI Pulogadung", layout="wide")
 
-st.title("⚡ Pemindai LJK Otomatis & Super Ringan")
+# ---------------------------------------------------------
+# CSS: OVERLAY BINGKAI PANDUAN KAMERA HP
+# ---------------------------------------------------------
+st.markdown("""
+    <style>
+    div[data-testid="stCameraInput"] {
+        position: relative;
+        border-radius: 12px;
+        overflow: hidden;
+    }
+    div[data-testid="stCameraInput"]::before {
+        content: "🎯 POSISIKAN 4 KOLOM JAWABAN DI DALAM BINGKAI HIJAU";
+        position: absolute;
+        top: 6%;
+        left: 4%;
+        width: 92%;
+        height: 84%;
+        border: 3px dashed #00FF00;
+        border-radius: 12px;
+        box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.40);
+        z-index: 99;
+        pointer-events: none;
+        color: #00FF00;
+        font-weight: bold;
+        font-size: 13px;
+        text-align: center;
+        padding-top: 10px;
+        background: rgba(0, 255, 0, 0.05);
+        box-sizing: border-box;
+    }
+    </style>
+""", unsafe_allow_html=True)
+
+st.title("⚡ Pemindai LJK Otomatis (Respon Cepat)")
 st.caption("Khusus Format LJK SMP YPI Pulogadung (40 Soal Pilihan Ganda - 4 Kolom)")
 
 # ---------------------------------------------------------
-# FUNGSI KOMPRESI FOTO SANGAT RINGAN
+# FUNGSI MEMPROSES FRAME GEOFOTO DARI BROWSER
 # ---------------------------------------------------------
-def compress_and_load_image(file_bytes, max_dim=1000, quality=75):
-    """
-    Mengompres foto mentah dari HP (5-10 MB) menjadi file sangat kecil (~100-200 KB)
-    dan menyesuaikan orientasi EXIF agar foto tidak terbalik.
-    """
+def prepare_image(file_bytes):
     raw_pil = Image.open(file_bytes)
-    
-    # Koreksi rotasi foto otomatis berdasarkan sensor HP (EXIF)
     try:
         raw_pil = ImageOps.exif_transpose(raw_pil)
     except Exception:
         pass
-
-    # Resize dimensi foto
+    
+    # Resize ringan jika resolusi browser masih terlalu besar
     w, h = raw_pil.size
-    if max(w, h) > max_dim:
-        scale = max_dim / float(max(w, h))
-        new_w, new_h = int(w * scale), int(h * scale)
-        raw_pil = raw_pil.resize((new_w, new_h), Image.Resampling.LANCZOS)
-    
-    # Kompresi tingkat kualitas JPEG di dalam RAM
-    buffer = io.BytesIO()
-    raw_pil.convert("RGB").save(buffer, format="JPEG", quality=quality, optimize=True)
-    buffer.seek(0)
-    
-    compressed_pil = Image.open(buffer)
-    size_kb = buffer.getbuffer().nbytes / 1024.0
-    return np.array(compressed_pil), size_kb
+    if max(w, h) > 1000:
+        scale = 1000.0 / float(max(w, h))
+        raw_pil = raw_pil.resize((int(w * scale), int(h * scale)), Image.Resampling.LANCZOS)
+        
+    return np.array(raw_pil.convert('RGB'))
 
 # ---------------------------------------------------------
 # DETEKSI 4 BLOK KOLOM TABEL LJK
@@ -186,30 +297,26 @@ for i in range(1, 41):
     key_dict[i] = col_target.selectbox(f"Soal {i}", ['A', 'B', 'C', 'D'], index=0, key=f"k_{i}")
 
 st.sidebar.markdown("---")
-st.sidebar.header("🎛️ Sensitivitas Deteksi Silang")
+st.sidebar.header("🎛️ Sensitivitas Coretan")
 delta_thresh = st.sidebar.slider("Kontras Kehitaman Coretan (Delta)", 5, 50, 15, 1)
 
-# Pengunggah File Utama yang Memicu Kamera Asli HP
-uploaded_file = st.file_uploader(
-    "📷 Ambil Foto lewat Kamera HP / Unggah Gambar LJK", 
-    type=['jpg', 'jpeg', 'png'],
-    help="Saat ditekan dari HP, pilih menu Kamera untuk mengambil foto langsung."
-)
+# Kamera Live Browser (Otomatis Kompresi di HP)
+picture = st.camera_input("📷 Arahkan LJK ke dalam bingkai hijau & ambil foto")
 
-if uploaded_file is not None:
+if picture is not None:
     try:
-        # 1. Kompresi Foto Ekstrem & Perbaikan EXIF Rotasi
-        img_np, compressed_size_kb = compress_and_load_image(uploaded_file, max_dim=1000, quality=75)
+        # Membaca gambar instan dari browser
+        img_np = prepare_image(picture)
         
-        # 2. Deteksi & Potong 4 Kolom
+        # Deteksi & Potong 4 Kolom
         col_crops, is_auto = detect_and_crop_4_columns(img_np)
         
-        # 3. Evaluasi Jawaban
+        # Evaluasi Jawaban
         score, correct_count, results, annotated_crops = process_4_columns(
             col_crops, key_dict, delta_thresh
         )
         
-        st.success(f"⚡ Foto berhasil dikompresi menjadi {compressed_size_kb:.1f} KB & diproses secara instan!")
+        st.success("⚡ Foto berhasil diproses secara instan!")
 
         st.subheader("🔍 Visualisasi Pembacaan Per Kolom")
         c1, c2, c3, c4 = st.columns(4)
@@ -232,5 +339,3 @@ if uploaded_file is not None:
 
     except Exception as e:
         st.error(f"Gagal memproses gambar: {str(e)}")
-else:
-    st.info("Tekan tombol di atas. Pada HP, pilih 'Kamera' untuk memotret LJK secara langsung.")
