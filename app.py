@@ -7,7 +7,7 @@ from PIL import Image
 st.set_page_config(page_title="Auto-Scan LJK EvalBee - SMP YPI Pulogadung", layout="wide")
 
 # ---------------------------------------------------------
-# SUNTIKAN CSS: BINGKAI & GRID PANDUAN KAMERA HP
+# CSS: BINGKAI PANDUAN KAMERA HP UKURAN FULL / LEBIH LEUASA
 # ---------------------------------------------------------
 st.markdown("""
     <style>
@@ -18,25 +18,25 @@ st.markdown("""
         overflow: hidden;
     }
     
-    /* Overlay Bingkai Target Scanner */
+    /* Overlay Bingkai Target Scanner Ukuran Luas (Full Grid) */
     div[data-testid="stCameraInput"]::before {
-        content: "🎯 POSISIKAN TABEL PILIHAN GANDA DI DALAM BINGKAI HIJAU";
+        content: "🎯 PASIKAN KERTAS / TABEL LJK DI DALAM BINGKAI HIJAU";
         position: absolute;
-        top: 20%;
-        left: 5%;
-        width: 90%;
-        height: 38%;
+        top: 6%;
+        left: 4%;
+        width: 92%;
+        height: 84%;
         border: 3px dashed #00FF00;
-        border-radius: 8px;
-        box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.45);
+        border-radius: 12px;
+        box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.40);
         z-index: 99;
         pointer-events: none;
         color: #00FF00;
         font-weight: bold;
-        font-size: 13px;
+        font-size: 14px;
         text-align: center;
-        padding-top: 8px;
-        background: rgba(0, 255, 0, 0.08);
+        padding-top: 10px;
+        background: rgba(0, 255, 0, 0.05);
         box-sizing: border-box;
     }
     </style>
@@ -72,22 +72,24 @@ def auto_align_table(image_np):
     for c in contours:
         peri = cv2.arcLength(c, True)
         approx = cv2.approxPolyDP(c, 0.02 * peri, True)
-        if len(approx) == 4 and cv2.contourArea(c) > (image_np.shape[0] * image_np.shape[1] * 0.1):
+        # Deteksi kontur segi empat dengan toleransi area lebih fleksibel
+        if len(approx) == 4 and cv2.contourArea(c) > (image_np.shape[0] * image_np.shape[1] * 0.05):
             table_corner = approx.reshape(4, 2)
             break
             
     if table_corner is not None:
         pts1 = order_points(table_corner)
-        maxWidth, maxHeight = 1000, 450
+        maxWidth, maxHeight = 1200, 520
         pts2 = np.float32([[0, 0], [maxWidth, 0], [maxWidth, maxHeight], [0, maxHeight]])
         
         M = cv2.getPerspectiveTransform(pts1, pts2)
         warped = cv2.warpPerspective(image_np, M, (maxWidth, maxHeight))
         return warped, True
     else:
+        # Fallback Crop Luas (18% - 58% tinggi gambar & 2% - 98% lebar gambar)
         h, w, _ = image_np.shape
-        crop = image_np[int(h*0.27):int(h*0.52), int(w*0.04):int(w*0.96)]
-        resized = cv2.resize(crop, (1000, 450))
+        crop = image_np[int(h*0.18):int(h*0.58), int(w*0.02):int(w*0.98)]
+        resized = cv2.resize(crop, (1200, 520))
         return resized, False
 
 # ---------------------------------------------------------
@@ -123,10 +125,10 @@ def process_warped_ljk(warped_img, key_answers, sensitivity=110, min_pixels=45):
             selected_option = "-"
             
             for opt_idx, opt_label in enumerate(options):
-                x1 = int(col_x_start + ((opt_idx + 1) * sub_col_w) + (sub_col_w * 0.20))
-                x2 = int(col_x_start + ((opt_idx + 2) * sub_col_w) - (sub_col_w * 0.20))
-                y1 = int(row_y_start + (row_h * 0.20))
-                y2 = int(row_y_start + row_h - (row_h * 0.20))
+                x1 = int(col_x_start + ((opt_idx + 1) * sub_col_w) + (sub_col_w * 0.18))
+                x2 = int(col_x_start + ((opt_idx + 2) * sub_col_w) - (sub_col_w * 0.18))
+                y1 = int(row_y_start + (row_h * 0.18))
+                y2 = int(row_y_start + row_h - (row_h * 0.18))
                 
                 cell = binary[y1:y2, x1:x2]
                 pixel_count = cv2.countNonZero(cell) if cell.size > 0 else 0
@@ -176,7 +178,6 @@ st.sidebar.header("🎛️ Ambang Toleransi")
 threshold_val = st.sidebar.slider("Kehitaman Pensil/Coretan", 50, 200, 110)
 min_pixel_val = st.sidebar.slider("Ukuran Coretan Minimal", 20, 150, 45)
 
-# Pilihan Mode Ambil Foto
 option_input = st.radio("Pilih Metode Pemindaian:", ["📷 Pakai Kamera HP Live", "📁 Unggah File Foto"], horizontal=True)
 
 uploaded_file = None
@@ -200,7 +201,7 @@ if uploaded_file is not None:
         if is_auto:
             st.success("✅ Tabel LJK berhasil dideteksi dan diluruskan secara otomatis!")
         else:
-            st.warning("⚠️ Garis tabel otomatis tidak terdeteksi sempurna. Menggunakan mode pemotongan estimasi.")
+            st.info("ℹ️ Menggunakan pemotongan area luas (Full-Range Fallback Mode).")
 
         c1, c2 = st.columns([1.2, 1])
         
