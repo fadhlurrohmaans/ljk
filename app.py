@@ -1,4 +1,5 @@
 import io
+import base64
 import streamlit as st
 import cv2
 import numpy as np
@@ -18,7 +19,6 @@ def align_image_to_template(img_siswa_np, img_template_np, max_features=10000, k
     gray_siswa = cv2.cvtColor(img_siswa_np, cv2.COLOR_RGB2GRAY)
     gray_template = cv2.cvtColor(img_template_np, cv2.COLOR_RGB2GRAY)
 
-    # Inisialisasi ORB (Pendeteksi Pola)
     orb = cv2.ORB_create(max_features)
     kps_siswa, des_siswa = orb.detectAndCompute(gray_siswa, None)
     kps_template, des_template = orb.detectAndCompute(gray_template, None)
@@ -26,12 +26,10 @@ def align_image_to_template(img_siswa_np, img_template_np, max_features=10000, k
     if des_siswa is None or des_template is None:
         return img_siswa_np, False
 
-    # Pencocokan titik unik
     matcher = cv2.DescriptorMatcher_create(cv2.DESCRIPTOR_MATCHER_BRUTEFORCE_HAMMING)
     matches = matcher.match(des_siswa, des_template)
     matches = sorted(matches, key=lambda x: x.distance)
 
-    # Ambil persentase kecocokan terbaik
     keep = int(len(matches) * keep_percent)
     matches = matches[:keep]
 
@@ -45,11 +43,9 @@ def align_image_to_template(img_siswa_np, img_template_np, max_features=10000, k
         pts_siswa[i] = kps_siswa[m.queryIdx].pt
         pts_template[i] = kps_template[m.trainIdx].pt
 
-    # Hitung matriks Homography
     H, mask = cv2.findHomography(pts_siswa, pts_template, method=cv2.RANSAC, ransacReprojThreshold=5.0)
 
     if H is not None:
-        # Luruskan LJK Siswa agar ukurannya 100% sama dengan Template
         h, w = img_template_np.shape[:2]
         aligned_img = cv2.warpPerspective(img_siswa_np, H, (w, h))
         return aligned_img, True
@@ -64,7 +60,6 @@ def process_evalbee_grid(warped_img, key_answers, total_q=40, sensitivity_delta=
     gray = cv2.cvtColor(warped_img, cv2.COLOR_RGB2GRAY)
     _, binary = cv2.threshold(gray, 125, 255, cv2.THRESH_BINARY_INV)
 
-    # Area Pilihan Ganda berdasarkan proporsi Template
     y1_global = int(h * 0.28)
     y2_global = int(h * 0.58)
     row_h = (y2_global - y1_global) / 10.0
@@ -137,6 +132,87 @@ def process_evalbee_grid(warped_img, key_answers, total_q=40, sensitivity_delta=
     final_score = (score_correct / float(total_q)) * 100.0
     return final_score, score_correct, results, annotated
 
+
+# ---------------------------------------------------------
+# FUNGSI 3: GENERATOR PANDUAN AR (SVG) UNTUK KAMERA
+# ---------------------------------------------------------
+def get_camera_guide_css(total_q=40):
+    # Membuat format SVG 800x1100 yang proporsinya sama persis dengan Master LJK
+    svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 1100">'
+    
+    # Anchor Sudut LJK
+    svg += '<rect x="15" y="15" width="50" height="50" fill="none" stroke="#00FF00" stroke-width="4"/>'
+    svg += '<rect x="735" y="15" width="50" height="50" fill="none" stroke="#00FF00" stroke-width="4"/>'
+    svg += '<rect x="15" y="1035" width="50" height="50" fill="none" stroke="#00FF00" stroke-width="4"/>'
+    svg += '<rect x="735" y="1035" width="50" height="50" fill="none" stroke="#00FF00" stroke-width="4"/>'
+    
+    w, h_img = 800, 1100
+    y1, y2 = int(h_img * 0.28), int(h_img * 0.58)
+    row_h = (y2 - y1) / 10.0
+    col_x_pcts = [(0.04, 0.25), (0.27, 0.48), (0.50, 0.71), (0.73, 0.94)]
+
+    # Menggambar titik-titik dan bingkai kolom persis di koordinat OpenCV
+    for c_idx, (start_pct, end_pct) in enumerate(col_x_pcts):
+        if (c_idx * 10) >= total_q: break
+        
+        x1 = w * start_pct
+        x2 = w * end_pct
+        col_w = x2 - x1
+        sub_col_w = col_w / 5.0
+        
+        # Garis bingkai luar kolom
+        svg += f'<rect x="{x1}" y="{y1}" width="{col_w}" height="{row_h*10}" fill="none" stroke="#00FF00" stroke-width="2" stroke-dasharray="5,5" opacity="0.6"/>'
+        
+        for r in range(10):
+            if (c_idx * 10 + r) >= total_q: break
+            row_y = y1 + (r * row_h)
+            
+            # Menggambar titik A, B, C, D
+            for opt in range(4):
+                # cx dihitung ke titik tengah sub-kolom (posisi opt_idx + 1.5)
+                cx = x1 + ((opt + 1.5) * sub_col_w)
+                cy = row_y + (row_h / 2)
+                svg += f'<circle cx="{cx}" cy="{cy}" r="6" fill="rgba(0,255,0,0.3)" stroke="#00FF00" stroke-width="2" />'
+                
+    svg += '</svg>'
+    
+    # Encode ke base64 agar bisa disisipkan ke CSS Streamlit
+    b64_svg = base64.b64encode(svg.encode('utf-8')).decode('utf-8')
+    
+    css = f"""
+    <style>
+    [data-testid="stCameraInput"] {{
+        position: relative;
+    }}
+    /* Menyisipkan SVG Panduan tepat di atas kamera */
+    [data-testid="stCameraInput"]::before {{
+        content: "";
+        position: absolute;
+        top: 0; left: 0; right: 0; bottom: 0;
+        margin: auto;
+        width: 100%; height: 100%;
+        background-image: url('data:image/svg+xml;base64,{b64_svg}');
+        background-size: contain;
+        background-position: center;
+        background-repeat: no-repeat;
+        z-index: 99;
+        pointer-events: none;
+        background-color: rgba(0,0,0,0.1); /* Sedikit menggelapkan latar */
+    }}
+    /* Teks Panduan Mengambang */
+    [data-testid="stCameraInput"]::after {{
+        content: "Paskan batas kertas dan bulatan LJK pada garis hijau ini";
+        position: absolute;
+        top: 10px; left: 0; width: 100%;
+        text-align: center; color: #00FF00;
+        font-weight: bold; font-size: 16px;
+        z-index: 99; pointer-events: none;
+        text-shadow: 2px 2px 4px #000;
+    }}
+    </style>
+    """
+    return css
+
 # ---------------------------------------------------------
 # SETUP STATE UI & PENGATURAN
 # ---------------------------------------------------------
@@ -162,6 +238,7 @@ with st.expander("⚙️ **Atur Kunci Jawaban & Sensitivitas**", expanded=False)
 num_questions = st.session_state['num_questions']
 key_dict = {i + 1: st.session_state['key_answers_list'][i] for i in range(num_questions)}
 
+
 # ---------------------------------------------------------
 # UPLOAD TEMPLATE MASTER & LJK SISWA
 # ---------------------------------------------------------
@@ -181,34 +258,30 @@ with col2:
         st.caption("Pastikan keseluruhan kertas LJK dan teks terekam di dalam foto.")
         siswa_file = st.file_uploader("Upload LJK Jawaban", type=['jpg', 'jpeg', 'png'], key="siswa_upload")
     else:
-        st.info("📸 **PANDUAN PEMINDAIAN:**\n"
-                "1. Posisikan kertas LJK tegak lurus dengan kamera.\n"
-                "2. Pastikan **4 sudut kotak/bulatan hitam (Anchor LJK)** masuk semua ke dalam frame.\n"
-                "3. Hindari bayangan dan pastikan cahaya cukup terang.")
+        st.info("📸 **MODE PEMINDAIAN AR:** Sesuaikan posisi LJK Anda sehingga bulatan jawaban pas menimpa titik-titik hijau di layar.")
+        
+        # Suntikkan Panduan SVG Kamera berdasarkan jumlah soal yang dipilih
+        st.markdown(get_camera_guide_css(num_questions), unsafe_allow_html=True)
+        
         siswa_file = st.camera_input("Ambil Foto LJK", key="siswa_kamera")
 
 if template_file is not None and siswa_file is not None:
     try:
-        # Load & Transpose Template
         raw_template = Image.open(template_file)
         raw_template = ImageOps.exif_transpose(raw_template)
-        # Standarisasi ukuran master ke resolusi ideal
         raw_template = raw_template.resize((800, 1100))
         img_template_np = np.array(raw_template.convert('RGB'))
 
-        # Load & Transpose Siswa (Berlaku untuk file unggahan maupun foto kamera)
         raw_siswa = Image.open(siswa_file)
         raw_siswa = ImageOps.exif_transpose(raw_siswa)
         img_siswa_np = np.array(raw_siswa.convert('RGB'))
 
-        # PROSES ALIGNMENT (Menyamakan perspektif siswa dengan master)
         with st.spinner("Mencocokkan pola LJK..."):
             aligned_img, is_aligned = align_image_to_template(img_siswa_np, img_template_np)
 
         if is_aligned:
             st.success("✅ Pola LJK Siswa berhasil disamakan dengan Template Master!")
             
-            # Eksekusi Pembacaan Jawaban
             score, correct_count, results, annotated_img = process_evalbee_grid(
                 aligned_img, key_dict, num_questions, delta_thresh
             )
@@ -224,7 +297,7 @@ if template_file is not None and siswa_file is not None:
             df_res = pd.DataFrame(results)
             st.dataframe(df_res, height=350, use_container_width=True)
         else:
-            st.error("❌ Gagal mencocokkan LJK. Pastikan foto siswa tidak terlalu blur dan format kertasnya persis dengan Master Template.")
+            st.error("❌ Gagal mencocokkan LJK. Pastikan foto siswa tidak blur dan garis sudut sesuai panduan layar kamera.")
             st.image(img_siswa_np, caption="Foto LJK Siswa (Gagal Diproses)", width=400)
 
     except Exception as e:
