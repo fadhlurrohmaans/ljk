@@ -8,57 +8,69 @@ from PIL import Image, ImageOps
 st.set_page_config(
     page_title="Scanner LJK Presisi - SMP YPI Pulogadung",
     layout="wide",
-    initial_sidebar_state="expanded"
+    initial_sidebar_state="collapsed"
 )
 
 # ---------------------------------------------------------
-# CSS: ANCHOR & BAYANG-BAYANG OVERLAY PADA KAMERA
+# CSS: FULL SCREEN KAMERA MOBILE & OVERLAY GRID PILIHAN GANDA
 # ---------------------------------------------------------
 st.markdown("""
     <style>
-    /* Styling Container Kamera Streamlit */
+    /* Hilangkan padding default Streamlit agar kamera full layar di HP */
+    .main .block-container {
+        padding-top: 0.2rem !important;
+        padding-bottom: 0.2rem !important;
+        padding-left: 0.1rem !important;
+        padding-right: 0.1rem !important;
+        max-width: 100% !important;
+    }
+
+    /* Container kamera full viewport height */
     div[data-testid="stCameraInput"] {
         position: relative !important;
+        width: 100% !important;
+        height: 78vh !important;
         border-radius: 16px !important;
         overflow: hidden !important;
-        max-width: 650px;
         margin: 0 auto;
     }
 
-    /* Bingkai Anchor & Efek Bayang-bayang di Luar Target */
-    div[data-testid="stCameraInput"]::after {
-        content: "📐 PAS-KAN LEMBAR LJK KE DALAM BINGKAI";
-        position: absolute;
-        top: 6%;
-        left: 6%;
-        width: 88%;
-        height: 78%;
-        border: 3px dashed #00FF66;
-        box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.55); /* Meredupkan area di luar LJK */
-        border-radius: 12px;
-        pointer-events: none; /* Tombol kamera tetap bisa diklik */
-        z-index: 99;
-        display: flex;
-        align-items: flex-start;
-        justify-content: center;
-        padding-top: 14px;
-        color: #00FF66;
-        font-weight: 700;
-        font-size: 13px;
-        letter-spacing: 1px;
-        text-shadow: 0 2px 4px rgba(0, 0, 0, 0.9);
-        box-sizing: border-box;
-    }
-
-    /* Menjaga rasio tampilan kamera */
     div[data-testid="stCameraInput"] video {
+        width: 100% !important;
+        height: 100% !important;
+        object-fit: cover !important;
         border-radius: 16px !important;
     }
+
+    /* BINGKAI OVERLAY & BAYANG-BAYANG LJK + GRID PILIHAN GANDA */
+    div[data-testid="stCameraInput"]::after {
+        content: "";
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        width: 90vw;
+        max-width: 460px;
+        height: 72vh;
+        border: 2px dashed #00FF66;
+        border-radius: 12px;
+        box-shadow: 0 0 0 2000px rgba(0, 0, 0, 0.65); /* Bayang-bayang redup di luar LJK */
+        pointer-events: none;
+        z-index: 99;
+        
+        /* Gambar SVG Grid Pilihan Ganda & Header */
+        background-image: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 300 420" width="100%" height="100%"><rect x="10" y="10" width="280" height="60" fill="none" stroke="%2300FF66" stroke-width="1.5" stroke-dasharray="4,4"/><text x="150" y="45" fill="%2300FF66" font-size="11" font-family="sans-serif" text-anchor="middle" font-weight="bold">AREA HEADER / IDENTITAS</text><rect x="10" y="80" width="280" height="325" fill="none" stroke="%2300FF66" stroke-width="1.5" stroke-dasharray="3,3"/><text x="150" y="98" fill="%2300FF66" font-size="10" font-family="sans-serif" text-anchor="middle" font-weight="bold">PILGAND (A B C D)</text><g stroke="%2300FF66" stroke-width="1" stroke-dasharray="2,2" fill="none" opacity="0.6"><rect x="15" y="108" width="62" height="290"/><rect x="84" y="108" width="62" height="290"/><rect x="153" y="108" width="62" height="290"/><rect x="222" y="108" width="62" height="290"/></g><g fill="%2300FF66" opacity="0.4"><circle cx="35" cy="130" r="3"/><circle cx="47" cy="130" r="3"/><circle cx="59" cy="130" r="3"/><circle cx="71" cy="130" r="3"/><circle cx="35" cy="155" r="3"/><circle cx="47" cy="155" r="3"/><circle cx="59" cy="155" r="3"/><circle cx="71" cy="155" r="3"/><circle cx="104" cy="130" r="3"/><circle cx="116" cy="130" r="3"/><circle cx="128" cy="130" r="3"/><circle cx="140" cy="130" r="3"/><circle cx="173" cy="130" r="3"/><circle cx="185" cy="130" r="3"/><circle cx="197" cy="130" r="3"/><circle cx="209" cy="130" r="3"/><circle cx="242" cy="130" r="3"/><circle cx="254" cy="130" r="3"/><circle cx="266" cy="130" r="3"/><circle cx="278" cy="130" r="3"/></g></svg>');
+        background-size: 96% 96%;
+        background-position: center;
+        background-repeat: no-repeat;
+    }
+
+    footer {visibility: hidden;}
+    header {visibility: hidden;}
     </style>
 """, unsafe_allow_html=True)
 
-st.title("🎯 Pemindai LJK Presisi (Metode EvalBee)")
-st.caption("Pindai Instan Kamera Native HP + Auto Warp Perspective Alignment - SMP YPI Pulogadung")
+st.title("🎯 Pemindai LJK SMP YPI")
 
 # ---------------------------------------------------------
 # SIDEBAR: KONTROL JUMLAH SOAL, KUNCI, DAN SENSITIVITAS
@@ -80,13 +92,12 @@ for i in range(1, num_questions + 1):
 
 st.sidebar.markdown("---")
 st.sidebar.header("🎛️ Sensitivitas Silang")
-delta_thresh = st.sidebar.slider("Sensitivitas Kehitaman Coretan (Delta)", 5, 50, 15, 1)
+delta_thresh = st.sidebar.slider("Sensitivitas Kehitaman Coretan", 5, 50, 15, 1)
 
 # ---------------------------------------------------------
-# FUNGSI METODE EVALBEE: WARP PERSPECTIVE 4 SUDUT KERTAS
+# METODE EVALBEE: WARP PERSPECTIVE 4 SUDUT KERTAS
 # ---------------------------------------------------------
 def order_points(pts):
-    """Mengurutkan 4 titik sudut: Top-Left, Top-Right, Bottom-Right, Bottom-Left."""
     rect = np.zeros((4, 2), dtype="float32")
     s = pts.sum(axis=1)
     rect[0] = pts[np.argmin(s)]
@@ -98,7 +109,6 @@ def order_points(pts):
     return rect
 
 def align_and_crop_sheet(image_bytes, target_w=800, target_h=1100):
-    """Mengecilkan foto, mendeteksi 4 sudut luar LJK, dan meluruskan kertas miring."""
     raw_pil = Image.open(image_bytes)
     try:
         raw_pil = ImageOps.exif_transpose(raw_pil)
@@ -145,7 +155,7 @@ def align_and_crop_sheet(image_bytes, target_w=800, target_h=1100):
         return warped, False
 
 # ---------------------------------------------------------
-# FUNGSI EKSTRAKSI DENSITAS GRID
+# FUNGSI EKSTRAKSI GRID PILIHAN GANDA
 # ---------------------------------------------------------
 def process_evalbee_grid(warped_img, key_answers, total_q=40, sensitivity_delta=15):
     h, w, _ = warped_img.shape
@@ -253,7 +263,7 @@ tab_cam, tab_file = st.tabs(["📷 Kamera HP Instan", "📁 Unggah File Gambar"]
 captured_file = None
 
 with tab_cam:
-    captured_file = st.camera_input("Arahkan LJK sesuai bingkai di layar")
+    captured_file = st.camera_input("Arahkan LJK sesuai garis bayang-bayang di layar")
 
 with tab_file:
     uploaded_file = st.file_uploader("Pilih gambar dari galeri", type=['jpg', 'jpeg', 'png'])
