@@ -9,7 +9,7 @@ from PIL import Image, ImageOps
 st.set_page_config(
     page_title="Scanner LJK Presisi - SMP YPI Pulogadung",
     layout="wide",
-    initial_sidebar_state="collapsed"
+    initial_sidebar_state="expanded"
 )
 
 # ---------------------------------------------------------
@@ -23,7 +23,6 @@ def get_svg_overlay_data_uri():
         [232, 244, 256, 268]  # Kolom 4: Soal 31-40
     ]
     
-    # 10 baris vertikal untuk setiap kolom
     row_ys = [118 + i * 27 for i in range(10)]
     
     circles = []
@@ -70,7 +69,7 @@ st.markdown(f"""
     div[data-testid="stCameraInput"] {{
         position: relative !important;
         width: 100% !important;
-        height: 80vh !important;
+        height: 78vh !important;
         border-radius: 16px !important;
         overflow: hidden !important;
         margin: 0 auto;
@@ -111,22 +110,59 @@ st.markdown(f"""
 st.title("🎯 Pemindai LJK SMP YPI")
 
 # ---------------------------------------------------------
-# SIDEBAR: KONTROL JUMLAH SOAL, KUNCI, DAN SENSITIVITAS
+# SIDEBAR: MODE SOAL & FITUR EDIT KUNCI JAWABAN
 # ---------------------------------------------------------
 st.sidebar.header("📋 Mode Pengerjaan")
 num_questions = st.sidebar.radio(
-    "Jumlah Soal Pilihan Ganda:",
+    "Pilih Jumlah Soal:",
     options=[40, 30],
     index=0
 )
 
 st.sidebar.markdown("---")
 st.sidebar.header(f"⚙️ Kunci Jawaban ({num_questions} Soal)")
-key_dict = {}
-cols = st.sidebar.columns(2)
-for i in range(1, num_questions + 1):
-    col_target = cols[0] if i <= (num_questions // 2) else cols[1]
-    key_dict[i] = col_target.selectbox(f"Soal {i}", ['A', 'B', 'C', 'D'], index=0, key=f"k_{i}")
+
+# Inisialisasi Kunci Jawaban di Session State
+if 'key_answers_list' not in st.session_state or len(st.session_state['key_answers_list']) != num_questions:
+    st.session_state['key_answers_list'] = ['A'] * num_questions
+
+tab_edit1, tab_edit2 = st.sidebar.tabs(["⚡ Input Cepat", "📊 Tabel Edit"])
+
+with tab_edit1:
+    quick_string = "".join(st.session_state['key_answers_list'])
+    user_input = st.text_input(
+        f"Paste/Ketik {num_questions} Kunci (tanpa spasi):",
+        value=quick_string,
+        help="Contoh: ABCDABCDABCD..."
+    ).upper()
+    
+    cleaned_keys = [char for char in user_input if char in ['A', 'B', 'C', 'D']]
+    if len(cleaned_keys) == num_questions:
+        st.session_state['key_answers_list'] = cleaned_keys
+        st.success(f"✅ Kunci {num_questions} soal tersimpan!")
+    elif len(user_input) > 0:
+        st.warning(f"Kunci terdeteksi {len(cleaned_keys)}/{num_questions}. Pastikan huruf A, B, C, atau D.")
+
+with tab_edit2:
+    df_keys = pd.DataFrame({
+        "No": list(range(1, num_questions + 1)),
+        "Kunci": st.session_state['key_answers_list']
+    })
+    
+    edited_df = st.data_editor(
+        df_keys,
+        column_config={
+            "No": st.column_config.NumberColumn("No Soal", disabled=True),
+            "Kunci": st.column_config.SelectboxColumn("Jawaban", options=['A', 'B', 'C', 'D'], required=True)
+        },
+        hide_index=True,
+        use_container_width=True,
+        height=320
+    )
+    st.session_state['key_answers_list'] = edited_df["Kunci"].tolist()
+
+# Mapping kunci jawaban dalam bentuk dictionary
+key_dict = {i + 1: st.session_state['key_answers_list'][i] for i in range(num_questions)}
 
 st.sidebar.markdown("---")
 st.sidebar.header("🎛️ Sensitivitas Silang")
