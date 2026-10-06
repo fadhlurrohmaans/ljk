@@ -5,7 +5,6 @@ import cv2
 import numpy as np
 import pandas as pd
 from PIL import Image, ImageOps
-from streamlit_cropper import st_cropper
 
 st.set_page_config(
     page_title="Scanner LJK Presisi - SMP YPI Pulogadung",
@@ -14,7 +13,7 @@ st.set_page_config(
 )
 
 # ---------------------------------------------------------
-# GENERATOR SVG OVERLAY (LAYAR KAMERA)
+# GENERATOR SVG OVERLAY
 # ---------------------------------------------------------
 def get_svg_overlay_data_uri():
     col_xs = [
@@ -53,92 +52,10 @@ def get_svg_overlay_data_uri():
 
 svg_encoded = get_svg_overlay_data_uri()
 
-# ---------------------------------------------------------
-# INISIALISASI SESSION STATE
-# ---------------------------------------------------------
 if 'num_questions' not in st.session_state:
     st.session_state['num_questions'] = 40
 
 st.title("🎯 Pemindai LJK SMP YPI")
-
-is_fullscreen = st.toggle("📱 Mode Kamera Full Screen (Layar Penuh)", value=False)
-
-cam_height = "85vh" if is_fullscreen else "60vh"
-cam_max_h = "none" if is_fullscreen else "520px"
-overlay_h = "78vh" if is_fullscreen else "52vh"
-overlay_max_h = "none" if is_fullscreen else "440px"
-
-# ---------------------------------------------------------
-# CSS RESPONSIF
-# ---------------------------------------------------------
-st.markdown(f"""
-    <style>
-    .main .block-container {{
-        padding-top: 0.2rem !important;
-        padding-bottom: 1rem !important;
-        padding-left: 0.3rem !important;
-        padding-right: 0.3rem !important;
-        max-width: 100% !important;
-    }}
-
-    h1 {{
-        font-size: 1.4rem !important;
-        text-align: center;
-        margin-bottom: 0.2rem !important;
-    }}
-
-    div[data-testid="stCameraInput"] {{
-        position: relative !important;
-        width: 100% !important;
-        max-width: 500px !important;
-        height: {cam_height} !important;
-        min-height: 380px !important;
-        max-height: {cam_max_h} !important;
-        border-radius: 16px !important;
-        overflow: hidden !important;
-        margin: 0 auto !important;
-    }}
-
-    div[data-testid="stCameraInput"] video {{
-        width: 100% !important;
-        height: 100% !important;
-        object-fit: cover !important;
-        border-radius: 16px !important;
-    }}
-
-    div[data-testid="stCameraInput"]::after {{
-        content: "";
-        position: absolute;
-        top: 50%;
-        left: 50%;
-        transform: translate(-50%, -50%);
-        width: 92vw;
-        max-width: 420px;
-        height: {overlay_h};
-        max-height: {overlay_max_h};
-        border: 2px dashed #00FF66;
-        border-radius: 12px;
-        box-shadow: 0 0 0 2000px rgba(0, 0, 0, 0.65);
-        pointer-events: none;
-        z-index: 10;
-        background-image: url("data:image/svg+xml;utf8,{svg_encoded}");
-        background-size: contain;
-        background-position: center;
-        background-repeat: no-repeat;
-    }}
-
-    .stButton button, .stDownloadButton button {{
-        width: 100% !important;
-        min-height: 46px !important;
-        font-size: 16px !important;
-        border-radius: 10px !important;
-        font-weight: bold !important;
-    }}
-
-    footer {{visibility: hidden;}}
-    #MainMenu {{visibility: hidden;}}
-    </style>
-""", unsafe_allow_html=True)
 
 # ---------------------------------------------------------
 # ATUR KUNCI JAWABAN
@@ -168,15 +85,12 @@ with st.expander("⚙️ **Atur Kunci Jawaban & Jumlah Soal**", expanded=False):
         if len(cleaned_keys) == num_questions:
             st.session_state['key_answers_list'] = cleaned_keys
             st.success(f"✅ Kunci {num_questions} soal tersimpan!")
-        elif len(user_input) > 0:
-            st.warning(f"Terdeteksi {len(cleaned_keys)}/{num_questions} kunci valid (A/B/C/D).")
 
     with tab_edit2:
         df_keys = pd.DataFrame({
             "No": list(range(1, num_questions + 1)),
             "Kunci": st.session_state['key_answers_list']
         })
-        
         edited_df = st.data_editor(
             df_keys,
             column_config={
@@ -195,8 +109,39 @@ num_questions = st.session_state['num_questions']
 key_dict = {i + 1: st.session_state['key_answers_list'][i] for i in range(num_questions)}
 
 # ---------------------------------------------------------
-# FUNGSI PROSES GRID EVALBEE
+# FUNGSI PERGESERAN & PENYESUAIAN POSISI
 # ---------------------------------------------------------
+def adjust_image_position(img_np, shift_x, shift_y, zoom_scale, target_w=800, target_h=1100):
+    h, w, _ = img_np.shape
+    resized_base = cv2.resize(img_np, (target_w, target_h))
+    
+    # Terapkan Zoom / Skala
+    if zoom_scale != 1.0:
+        new_w = int(target_w * zoom_scale)
+        new_h = int(target_h * zoom_scale)
+        scaled_img = cv2.resize(resized_base, (new_w, new_h))
+        
+        # Crop / Pad kembali ke target resolution
+        canvas = np.zeros((target_h, target_w, 3), dtype=np.uint8)
+        
+        start_x_src = max(0, (new_w - target_w) // 2)
+        start_y_src = max(0, (new_h - target_h) // 2)
+        end_x_src = min(new_w, start_x_src + target_w)
+        end_y_src = min(new_h, start_y_src + target_h)
+        
+        start_x_dst = max(0, (target_w - new_w) // 2)
+        start_y_dst = max(0, (target_h - new_h) // 2)
+        end_x_dst = min(target_w, start_x_dst + (end_x_src - start_x_src))
+        end_y_dst = min(target_h, start_y_dst + (end_y_src - start_y_src))
+        
+        canvas[start_y_dst:end_y_dst, start_x_dst:end_x_dst] = scaled_img[start_y_src:end_y_src, start_x_src:end_x_src]
+        resized_base = canvas
+
+    # Terapkan Pergeseran Posisi (Translation X & Y)
+    M = np.float32([[1, 0, shift_x], [0, 1, shift_y]])
+    shifted = cv2.warpAffine(resized_base, M, (target_w, target_h))
+    return shifted
+
 def process_evalbee_grid(warped_img, key_answers, total_q=40, sensitivity_delta=15):
     h, w, _ = warped_img.shape
     gray = cv2.cvtColor(warped_img, cv2.COLOR_RGB2GRAY)
@@ -294,7 +239,7 @@ def process_evalbee_grid(warped_img, key_answers, total_q=40, sensitivity_delta=
     return final_score, score_correct, results, annotated
 
 # ---------------------------------------------------------
-# TAB AMBIL GAMBAR / UPLOAD GALERI
+# TAB AMBIL GAMBAR & PENYESUAIAN SLIDER
 # ---------------------------------------------------------
 tab_cam, tab_file = st.tabs(["📷 Ambil Foto LJK", "📁 Upload Galeri"])
 
@@ -320,18 +265,19 @@ with tab_file:
         except Exception:
             pass
         
-        st.info("👆 **Geser kotak hijau di bawah ini** hingga menutupi seluruh area lembar LJK, lalu sistem akan otomatis menyesuaikan posisi anchor.")
+        img_np = np.array(raw_pil.convert('RGB'))
+
+        st.subheader("🎛️ Pasang & Geser Posisi Anchor LJK")
+        col_ctrl1, col_ctrl2, col_ctrl3 = st.columns(3)
         
-        # INTERAKSI GESER LANGSUNG PADA GAMBAR (STREAMLIT CROPPER)
-        cropped_pil = st_cropper(
-            raw_pil,
-            realtime_update=True,
-            box_color='#00FF66',
-            aspect_ratio=(8, 11)
-        )
-        
-        img_np = np.array(cropped_pil.convert('RGB'))
-        processed_img = cv2.resize(img_np, (800, 1100))
+        with col_ctrl1:
+            shift_x = st.slider("↔️ Geser Kiri / Kanan", -150, 150, 0, 2)
+        with col_ctrl2:
+            shift_y = st.slider("↕️ Geser Atas / Bawah", -150, 150, 0, 2)
+        with col_ctrl3:
+            zoom = st.slider("🔍 Perbesar / Perkecil", 0.7, 1.3, 1.0, 0.02)
+
+        processed_img = adjust_image_position(img_np, shift_x, shift_y, zoom)
 
 # ---------------------------------------------------------
 # TAMPILAN HASIL SCAN
@@ -343,7 +289,6 @@ if processed_img is not None:
         )
 
         st.markdown("---")
-        
         st.metric(label="📊 NILAI AKHIR", value=f"{score:.1f}")
         st.info(f"**Jawaban Benar:** {correct_count} dari {num_questions} Soal")
 
