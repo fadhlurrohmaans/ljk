@@ -13,16 +13,15 @@ st.set_page_config(
 )
 
 # ---------------------------------------------------------
-# GENERATOR SVG OVERLAY: 40 NOMOR SOAL (160 TITIK A-B-C-D)
+# GENERATOR SVG OVERLAY
 # ---------------------------------------------------------
 def get_svg_overlay_data_uri():
     col_xs = [
-        [25, 37, 49, 61],     # Kolom 1: Soal 1-10
-        [94, 106, 118, 130],  # Kolom 2: Soal 11-20
-        [163, 175, 187, 199], # Kolom 3: Soal 21-30
-        [232, 244, 256, 268]  # Kolom 4: Soal 31-40
+        [25, 37, 49, 61],
+        [94, 106, 118, 130],
+        [163, 175, 187, 199],
+        [232, 244, 256, 268]
     ]
-    
     row_ys = [118 + i * 27 for i in range(10)]
     
     circles = []
@@ -54,7 +53,7 @@ def get_svg_overlay_data_uri():
 svg_encoded = get_svg_overlay_data_uri()
 
 # ---------------------------------------------------------
-# PENGATURAN KUNCI JAWABAN & MODES
+# INISIALISASI SESSION STATE & PENGATURAN
 # ---------------------------------------------------------
 if 'num_questions' not in st.session_state:
     st.session_state['num_questions'] = 40
@@ -69,7 +68,7 @@ overlay_h = "78vh" if is_fullscreen else "52vh"
 overlay_max_h = "none" if is_fullscreen else "440px"
 
 # ---------------------------------------------------------
-# CSS OPTIMASI RESPONSIF LAYAR HP ANDROID
+# CSS RESPONSIF
 # ---------------------------------------------------------
 st.markdown(f"""
     <style>
@@ -140,7 +139,10 @@ st.markdown(f"""
     </style>
 """, unsafe_allow_html=True)
 
-with st.expander("⚙️ **Atur Kunci Jawaban & Jumlah Soal**", expanded=False):
+# ---------------------------------------------------------
+# ATUR KUNCI JAWABAN & KALIBRASI ANCHOR
+# ---------------------------------------------------------
+with st.expander("⚙️️ **Atur Kunci Jawaban & Jumlah Soal**", expanded=False):
     num_questions = st.radio(
         "Jumlah Soal:",
         options=[40, 30],
@@ -188,11 +190,22 @@ with st.expander("⚙️ **Atur Kunci Jawaban & Jumlah Soal**", expanded=False):
 
     delta_thresh = st.slider("Sensitivitas Kehitaman Pensil", 5, 50, 15, 1)
 
+# FITUR BARU: PANEL KALIBRASI ANCHOR
+with st.expander("📐 **Kalibrasi Posisi Anchor / Grid Pilihan Ganda**", expanded=False):
+    st.caption("Gunakan slider berikut jika kotak hijau pemindai tidak tepat berada di atas bulatan LJK:")
+    col_c1, col_c2 = st.columns(2)
+    with col_c1:
+        y1_offset = st.slider("Posisi Atas Grid (%)", 15, 40, 28, 1)
+        grid_height = st.slider("Tinggi Area Grid (%)", 20, 50, 30, 1)
+    with col_c2:
+        x_shift = st.slider("Geser Kiri/Kanan Grid (%)", -10, 10, 0, 1)
+        sub_width = st.slider("Lebar Kolom Grid (%)", 15, 25, 21, 1)
+
 num_questions = st.session_state['num_questions']
 key_dict = {i + 1: st.session_state['key_answers_list'][i] for i in range(num_questions)}
 
 # ---------------------------------------------------------
-# FUNGSI ALIGNMENT TINGKAT TINGGI (OPTIMASI UPLOAD GALERI)
+# FUNGSI ALIGNMENT & PROSES GRID DENGAN KALIBRASI DYNAMIS
 # ---------------------------------------------------------
 def order_points(pts):
     rect = np.zeros((4, 2), dtype="float32")
@@ -222,7 +235,6 @@ def align_and_crop_sheet(image_bytes, target_w=800, target_h=1100):
     gray = cv2.cvtColor(img_np, cv2.COLOR_RGB2GRAY)
     blur = cv2.GaussianBlur(gray, (5, 5), 0)
 
-    # Coba beberapa metode ambang batas untuk mendapatkan kontur terluar LJK
     screen_cnt = None
     all_contours = []
 
@@ -240,7 +252,6 @@ def align_and_crop_sheet(image_bytes, target_w=800, target_h=1100):
 
         for c in cnts:
             area = cv2.contourArea(c)
-            # Kertas LJK minimal berukuran 15% dari luas seluruh gambar
             if area < (img_np.shape[0] * img_np.shape[1] * 0.15):
                 continue
             peri = cv2.arcLength(c, True)
@@ -251,7 +262,6 @@ def align_and_crop_sheet(image_bytes, target_w=800, target_h=1100):
         if screen_cnt is not None:
             break
 
-    # 1. Jika 4 sudut terdeteksi (Ideal)
     if screen_cnt is not None:
         pts = screen_cnt.reshape(4, 2)
         rect = order_points(pts)
@@ -266,7 +276,6 @@ def align_and_crop_sheet(image_bytes, target_w=800, target_h=1100):
         warped = cv2.warpPerspective(img_np, M, (target_w, target_h))
         return warped, True
 
-    # 2. Jika 4 sudut gagal terdeteksi, lakukan pemotongan otomatis Bounding Box terluar
     all_contours = sorted(all_contours, key=cv2.contourArea, reverse=True)
     if len(all_contours) > 0 and cv2.contourArea(all_contours[0]) > (img_np.shape[0] * img_np.shape[1] * 0.10):
         x, y, bw, bh = cv2.boundingRect(all_contours[0])
@@ -274,24 +283,28 @@ def align_and_crop_sheet(image_bytes, target_w=800, target_h=1100):
         warped = cv2.resize(cropped, (target_w, target_h))
         return warped, False
 
-    # 3. Fallback terakhir jika kontur tidak ditemukan sama sekali
     warped = cv2.resize(img_np, (target_w, target_h))
     return warped, False
 
-def process_evalbee_grid(warped_img, key_answers, total_q=40, sensitivity_delta=15):
+def process_evalbee_grid_calibrated(warped_img, key_answers, total_q, sensitivity_delta, y1_pct, h_pct, x_shift_pct, col_w_pct):
     h, w, _ = warped_img.shape
     gray = cv2.cvtColor(warped_img, cv2.COLOR_RGB2GRAY)
     _, binary = cv2.threshold(gray, 125, 255, cv2.THRESH_BINARY_INV)
 
-    y1_global = int(h * 0.28)
-    y2_global = int(h * 0.58)
+    # Kalkulasi Koordinat Dinamis berdasarkan Kalibrasi Slider
+    y1_global = int(h * (y1_pct / 100.0))
+    y2_global = y1_global + int(h * (h_pct / 100.0))
     row_h = (y2_global - y1_global) / 10.0
 
+    # 4 Kolom dengan nilai offset X dinamis
+    shift_val = x_shift_pct / 100.0
+    col_w_val = col_w_pct / 100.0
+    
     col_x_pcts = [
-        (0.04, 0.25),
-        (0.27, 0.48),
-        (0.50, 0.71),
-        (0.73, 0.94)
+        (0.04 + shift_val, 0.04 + shift_val + col_w_val),
+        (0.27 + shift_val, 0.27 + shift_val + col_w_val),
+        (0.50 + shift_val, 0.50 + shift_val + col_w_val),
+        (0.73 + shift_val, 0.73 + shift_val + col_w_val)
     ]
 
     col_ranges = [
@@ -307,8 +320,8 @@ def process_evalbee_grid(warped_img, key_answers, total_q=40, sensitivity_delta=
 
     for c_idx, q_range in enumerate(col_ranges):
         x_start_pct, x_end_pct = col_x_pcts[c_idx]
-        x1_col = int(w * x_start_pct)
-        x2_col = int(w * x_end_pct)
+        x1_col = int(w * max(0.0, x_start_pct))
+        x2_col = int(w * min(1.0, x_end_pct))
         col_w = x2_col - x1_col
         sub_col_w = col_w / 5.0
 
@@ -396,8 +409,9 @@ if captured_file is not None:
     try:
         warped_img, is_warped = align_and_crop_sheet(captured_file, target_w=800, target_h=1100)
 
-        score, correct_count, results, annotated_img = process_evalbee_grid(
-            warped_img, key_dict, num_questions, delta_thresh
+        score, correct_count, results, annotated_img = process_evalbee_grid_calibrated(
+            warped_img, key_dict, num_questions, delta_thresh,
+            y1_pct=y1_offset, h_pct=grid_height, x_shift_pct=x_shift, col_w_pct=sub_width
         )
 
         st.markdown("---")
