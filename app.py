@@ -5,6 +5,7 @@ import cv2
 import numpy as np
 import pandas as pd
 from PIL import Image, ImageOps
+from streamlit_cropper import st_cropper
 
 st.set_page_config(
     page_title="Scanner LJK Presisi - SMP YPI Pulogadung",
@@ -13,7 +14,7 @@ st.set_page_config(
 )
 
 # ---------------------------------------------------------
-# GENERATOR SVG OVERLAY
+# GENERATOR SVG OVERLAY (LAYAR KAMERA)
 # ---------------------------------------------------------
 def get_svg_overlay_data_uri():
     col_xs = [
@@ -53,7 +54,7 @@ def get_svg_overlay_data_uri():
 svg_encoded = get_svg_overlay_data_uri()
 
 # ---------------------------------------------------------
-# INISIALISASI SESSION STATE & PENGATURAN
+# INISIALISASI SESSION STATE
 # ---------------------------------------------------------
 if 'num_questions' not in st.session_state:
     st.session_state['num_questions'] = 40
@@ -140,9 +141,9 @@ st.markdown(f"""
 """, unsafe_allow_html=True)
 
 # ---------------------------------------------------------
-# ATUR KUNCI JAWABAN & KALIBRASI ANCHOR
+# ATUR KUNCI JAWABAN
 # ---------------------------------------------------------
-with st.expander("⚙️️ **Atur Kunci Jawaban & Jumlah Soal**", expanded=False):
+with st.expander("⚙️ **Atur Kunci Jawaban & Jumlah Soal**", expanded=False):
     num_questions = st.radio(
         "Jumlah Soal:",
         options=[40, 30],
@@ -190,121 +191,26 @@ with st.expander("⚙️️ **Atur Kunci Jawaban & Jumlah Soal**", expanded=Fals
 
     delta_thresh = st.slider("Sensitivitas Kehitaman Pensil", 5, 50, 15, 1)
 
-# FITUR BARU: PANEL KALIBRASI ANCHOR
-with st.expander("📐 **Kalibrasi Posisi Anchor / Grid Pilihan Ganda**", expanded=False):
-    st.caption("Gunakan slider berikut jika kotak hijau pemindai tidak tepat berada di atas bulatan LJK:")
-    col_c1, col_c2 = st.columns(2)
-    with col_c1:
-        y1_offset = st.slider("Posisi Atas Grid (%)", 15, 40, 28, 1)
-        grid_height = st.slider("Tinggi Area Grid (%)", 20, 50, 30, 1)
-    with col_c2:
-        x_shift = st.slider("Geser Kiri/Kanan Grid (%)", -10, 10, 0, 1)
-        sub_width = st.slider("Lebar Kolom Grid (%)", 15, 25, 21, 1)
-
 num_questions = st.session_state['num_questions']
 key_dict = {i + 1: st.session_state['key_answers_list'][i] for i in range(num_questions)}
 
 # ---------------------------------------------------------
-# FUNGSI ALIGNMENT & PROSES GRID DENGAN KALIBRASI DYNAMIS
+# FUNGSI PROSES GRID EVALBEE
 # ---------------------------------------------------------
-def order_points(pts):
-    rect = np.zeros((4, 2), dtype="float32")
-    s = pts.sum(axis=1)
-    rect[0] = pts[np.argmin(s)]
-    rect[2] = pts[np.argmax(s)]
-
-    diff = np.diff(pts, axis=1)
-    rect[1] = pts[np.argmin(diff)]
-    rect[3] = pts[np.argmax(diff)]
-    return rect
-
-def align_and_crop_sheet(image_bytes, target_w=800, target_h=1100):
-    raw_pil = Image.open(image_bytes)
-    try:
-        raw_pil = ImageOps.exif_transpose(raw_pil)
-    except Exception:
-        pass
-
-    w, h = raw_pil.size
-    max_dim = 1200
-    if max(w, h) > max_dim:
-        scale = max_dim / float(max(w, h))
-        raw_pil = raw_pil.resize((int(w * scale), int(h * scale)), Image.Resampling.LANCZOS)
-
-    img_np = np.array(raw_pil.convert('RGB'))
-    gray = cv2.cvtColor(img_np, cv2.COLOR_RGB2GRAY)
-    blur = cv2.GaussianBlur(gray, (5, 5), 0)
-
-    screen_cnt = None
-    all_contours = []
-
-    canny_img = cv2.Canny(blur, 30, 120)
-    _, otsu_img = cv2.threshold(blur, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-
-    for edge_map in [canny_img, otsu_img]:
-        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
-        closed = cv2.morphologyEx(edge_map, cv2.MORPH_CLOSE, kernel)
-        
-        cnts, _ = cv2.findContours(closed.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        cnts = sorted(cnts, key=cv2.contourArea, reverse=True)
-        if cnts:
-            all_contours.extend(cnts)
-
-        for c in cnts:
-            area = cv2.contourArea(c)
-            if area < (img_np.shape[0] * img_np.shape[1] * 0.15):
-                continue
-            peri = cv2.arcLength(c, True)
-            approx = cv2.approxPolyDP(c, 0.02 * peri, True)
-            if len(approx) == 4:
-                screen_cnt = approx
-                break
-        if screen_cnt is not None:
-            break
-
-    if screen_cnt is not None:
-        pts = screen_cnt.reshape(4, 2)
-        rect = order_points(pts)
-        dst = np.array([
-            [0, 0],
-            [target_w - 1, 0],
-            [target_w - 1, target_h - 1],
-            [0, target_h - 1]
-        ], dtype="float32")
-
-        M = cv2.getPerspectiveTransform(rect, dst)
-        warped = cv2.warpPerspective(img_np, M, (target_w, target_h))
-        return warped, True
-
-    all_contours = sorted(all_contours, key=cv2.contourArea, reverse=True)
-    if len(all_contours) > 0 and cv2.contourArea(all_contours[0]) > (img_np.shape[0] * img_np.shape[1] * 0.10):
-        x, y, bw, bh = cv2.boundingRect(all_contours[0])
-        cropped = img_np[y:y+bh, x:x+bw]
-        warped = cv2.resize(cropped, (target_w, target_h))
-        return warped, False
-
-    warped = cv2.resize(img_np, (target_w, target_h))
-    return warped, False
-
-def process_evalbee_grid_calibrated(warped_img, key_answers, total_q, sensitivity_delta, y1_pct, h_pct, x_shift_pct, col_w_pct):
+def process_evalbee_grid(warped_img, key_answers, total_q=40, sensitivity_delta=15):
     h, w, _ = warped_img.shape
     gray = cv2.cvtColor(warped_img, cv2.COLOR_RGB2GRAY)
     _, binary = cv2.threshold(gray, 125, 255, cv2.THRESH_BINARY_INV)
 
-    # Kalkulasi Koordinat Dinamis berdasarkan Kalibrasi Slider
-    y1_global = int(h * (y1_pct / 100.0))
-    y2_global = y1_global + int(h * (h_pct / 100.0))
+    y1_global = int(h * 0.28)
+    y2_global = int(h * 0.58)
     row_h = (y2_global - y1_global) / 10.0
 
-    # 4 Kolom dengan nilai offset X dinamis
-    shift_val = x_shift_pct / 100.0
-    col_w_val = col_w_pct / 100.0
-    
     col_x_pcts = [
-        (0.04 + shift_val, 0.04 + shift_val + col_w_val),
-        (0.27 + shift_val, 0.27 + shift_val + col_w_val),
-        (0.50 + shift_val, 0.50 + shift_val + col_w_val),
-        (0.73 + shift_val, 0.73 + shift_val + col_w_val)
+        (0.04, 0.25),
+        (0.27, 0.48),
+        (0.50, 0.71),
+        (0.73, 0.94)
     ]
 
     col_ranges = [
@@ -320,8 +226,8 @@ def process_evalbee_grid_calibrated(warped_img, key_answers, total_q, sensitivit
 
     for c_idx, q_range in enumerate(col_ranges):
         x_start_pct, x_end_pct = col_x_pcts[c_idx]
-        x1_col = int(w * max(0.0, x_start_pct))
-        x2_col = int(w * min(1.0, x_end_pct))
+        x1_col = int(w * x_start_pct)
+        x2_col = int(w * x_end_pct)
         col_w = x2_col - x1_col
         sub_col_w = col_w / 5.0
 
@@ -388,30 +294,52 @@ def process_evalbee_grid_calibrated(warped_img, key_answers, total_q, sensitivit
     return final_score, score_correct, results, annotated
 
 # ---------------------------------------------------------
-# TAB AMBIL GAMBAR
+# TAB AMBIL GAMBAR / UPLOAD GALERI
 # ---------------------------------------------------------
 tab_cam, tab_file = st.tabs(["📷 Ambil Foto LJK", "📁 Upload Galeri"])
 
-captured_file = None
+processed_img = None
 
 with tab_cam:
     captured_file = st.camera_input("Posisikan LJK di dalam garis hijau")
+    if captured_file is not None:
+        raw_pil = Image.open(captured_file)
+        try:
+            raw_pil = ImageOps.exif_transpose(raw_pil)
+        except Exception:
+            pass
+        img_np = np.array(raw_pil.convert('RGB'))
+        processed_img = cv2.resize(img_np, (800, 1100))
 
 with tab_file:
     uploaded_file = st.file_uploader("Pilih foto LJK dari Galeri HP", type=['jpg', 'jpeg', 'png'])
     if uploaded_file is not None:
-        captured_file = uploaded_file
+        raw_pil = Image.open(uploaded_file)
+        try:
+            raw_pil = ImageOps.exif_transpose(raw_pil)
+        except Exception:
+            pass
+        
+        st.info("👆 **Geser kotak hijau di bawah ini** hingga menutupi seluruh area lembar LJK, lalu sistem akan otomatis menyesuaikan posisi anchor.")
+        
+        # INTERAKSI GESER LANGSUNG PADA GAMBAR (STREAMLIT CROPPER)
+        cropped_pil = st_cropper(
+            raw_pil,
+            realtime_update=True,
+            box_color='#00FF66',
+            aspect_ratio=(8, 11)
+        )
+        
+        img_np = np.array(cropped_pil.convert('RGB'))
+        processed_img = cv2.resize(img_np, (800, 1100))
 
 # ---------------------------------------------------------
 # TAMPILAN HASIL SCAN
 # ---------------------------------------------------------
-if captured_file is not None:
+if processed_img is not None:
     try:
-        warped_img, is_warped = align_and_crop_sheet(captured_file, target_w=800, target_h=1100)
-
-        score, correct_count, results, annotated_img = process_evalbee_grid_calibrated(
-            warped_img, key_dict, num_questions, delta_thresh,
-            y1_pct=y1_offset, h_pct=grid_height, x_shift_pct=x_shift, col_w_pct=sub_width
+        score, correct_count, results, annotated_img = process_evalbee_grid(
+            processed_img, key_dict, num_questions, delta_thresh
         )
 
         st.markdown("---")
