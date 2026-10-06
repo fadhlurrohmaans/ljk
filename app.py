@@ -61,10 +61,8 @@ if 'num_questions' not in st.session_state:
 
 st.title("🎯 Pemindai LJK SMP YPI")
 
-# Opsi Toggle Full Screen Kamera
 is_fullscreen = st.toggle("📱 Mode Kamera Full Screen (Layar Penuh)", value=False)
 
-# Pengaturan Dimensi CSS Dinamis berdasarkan Status Full Screen
 cam_height = "85vh" if is_fullscreen else "60vh"
 cam_max_h = "none" if is_fullscreen else "520px"
 overlay_h = "78vh" if is_fullscreen else "52vh"
@@ -75,7 +73,6 @@ overlay_max_h = "none" if is_fullscreen else "440px"
 # ---------------------------------------------------------
 st.markdown(f"""
     <style>
-    /* Padding ringkas untuk layar HP */
     .main .block-container {{
         padding-top: 0.2rem !important;
         padding-bottom: 1rem !important;
@@ -84,14 +81,12 @@ st.markdown(f"""
         max-width: 100% !important;
     }}
 
-    /* Judul Aplikasi Ringkas di HP */
     h1 {{
         font-size: 1.4rem !important;
         text-align: center;
         margin-bottom: 0.2rem !important;
     }}
 
-    /* Kamera Pas dengan Layar HP (Dinamis Full Screen) */
     div[data-testid="stCameraInput"] {{
         position: relative !important;
         width: 100% !important;
@@ -111,7 +106,6 @@ st.markdown(f"""
         border-radius: 16px !important;
     }}
 
-    /* Bingkai Presisi LJK Layar Sentuh */
     div[data-testid="stCameraInput"]::after {{
         content: "";
         position: absolute;
@@ -133,7 +127,6 @@ st.markdown(f"""
         background-repeat: no-repeat;
     }}
 
-    /* Tombol & Input Ramah Sentuhan Jari HP */
     .stButton button, .stDownloadButton button {{
         width: 100% !important;
         min-height: 46px !important;
@@ -142,7 +135,6 @@ st.markdown(f"""
         font-weight: bold !important;
     }}
 
-    /* Sembunyikan Footer & Header Bawaan */
     footer {{visibility: hidden;}}
     #MainMenu {{visibility: hidden;}}
     </style>
@@ -200,7 +192,7 @@ num_questions = st.session_state['num_questions']
 key_dict = {i + 1: st.session_state['key_answers_list'][i] for i in range(num_questions)}
 
 # ---------------------------------------------------------
-# FUNGSI ALIGNMENT & ALGORITMA EVALBEE
+# FUNGSI ALIGNMENT TINGKAT TINGGI (OPTIMASI UPLOAD GALERI)
 # ---------------------------------------------------------
 def order_points(pts):
     rect = np.zeros((4, 2), dtype="float32")
@@ -221,7 +213,7 @@ def align_and_crop_sheet(image_bytes, target_w=800, target_h=1100):
         pass
 
     w, h = raw_pil.size
-    max_dim = 1000
+    max_dim = 1200
     if max(w, h) > max_dim:
         scale = max_dim / float(max(w, h))
         raw_pil = raw_pil.resize((int(w * scale), int(h * scale)), Image.Resampling.LANCZOS)
@@ -229,19 +221,37 @@ def align_and_crop_sheet(image_bytes, target_w=800, target_h=1100):
     img_np = np.array(raw_pil.convert('RGB'))
     gray = cv2.cvtColor(img_np, cv2.COLOR_RGB2GRAY)
     blur = cv2.GaussianBlur(gray, (5, 5), 0)
-    edged = cv2.Canny(blur, 50, 150)
 
-    contours, _ = cv2.findContours(edged.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    contours = sorted(contours, key=cv2.contourArea, reverse=True)
-
+    # Coba beberapa metode ambang batas untuk mendapatkan kontur terluar LJK
     screen_cnt = None
-    for c in contours:
-        peri = cv2.arcLength(c, True)
-        approx = cv2.approxPolyDP(c, 0.02 * peri, True)
-        if len(approx) == 4:
-            screen_cnt = approx
+    all_contours = []
+
+    canny_img = cv2.Canny(blur, 30, 120)
+    _, otsu_img = cv2.threshold(blur, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+
+    for edge_map in [canny_img, otsu_img]:
+        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
+        closed = cv2.morphologyEx(edge_map, cv2.MORPH_CLOSE, kernel)
+        
+        cnts, _ = cv2.findContours(closed.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        cnts = sorted(cnts, key=cv2.contourArea, reverse=True)
+        if cnts:
+            all_contours.extend(cnts)
+
+        for c in cnts:
+            area = cv2.contourArea(c)
+            # Kertas LJK minimal berukuran 15% dari luas seluruh gambar
+            if area < (img_np.shape[0] * img_np.shape[1] * 0.15):
+                continue
+            peri = cv2.arcLength(c, True)
+            approx = cv2.approxPolyDP(c, 0.02 * peri, True)
+            if len(approx) == 4:
+                screen_cnt = approx
+                break
+        if screen_cnt is not None:
             break
 
+    # 1. Jika 4 sudut terdeteksi (Ideal)
     if screen_cnt is not None:
         pts = screen_cnt.reshape(4, 2)
         rect = order_points(pts)
@@ -255,9 +265,18 @@ def align_and_crop_sheet(image_bytes, target_w=800, target_h=1100):
         M = cv2.getPerspectiveTransform(rect, dst)
         warped = cv2.warpPerspective(img_np, M, (target_w, target_h))
         return warped, True
-    else:
-        warped = cv2.resize(img_np, (target_w, target_h))
+
+    # 2. Jika 4 sudut gagal terdeteksi, lakukan pemotongan otomatis Bounding Box terluar
+    all_contours = sorted(all_contours, key=cv2.contourArea, reverse=True)
+    if len(all_contours) > 0 and cv2.contourArea(all_contours[0]) > (img_np.shape[0] * img_np.shape[1] * 0.10):
+        x, y, bw, bh = cv2.boundingRect(all_contours[0])
+        cropped = img_np[y:y+bh, x:x+bw]
+        warped = cv2.resize(cropped, (target_w, target_h))
         return warped, False
+
+    # 3. Fallback terakhir jika kontur tidak ditemukan sama sekali
+    warped = cv2.resize(img_np, (target_w, target_h))
+    return warped, False
 
 def process_evalbee_grid(warped_img, key_answers, total_q=40, sensitivity_delta=15):
     h, w, _ = warped_img.shape
