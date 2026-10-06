@@ -1,4 +1,5 @@
 import io
+import urllib.parse
 import streamlit as st
 import cv2
 import numpy as np
@@ -12,61 +13,98 @@ st.set_page_config(
 )
 
 # ---------------------------------------------------------
-# CSS: FULL SCREEN KAMERA MOBILE & OVERLAY GRID PILIHAN GANDA
+# GENERATOR SVG OVERLAY: 40 NOMOR SOAL (160 TITIK A-B-C-D)
 # ---------------------------------------------------------
-st.markdown("""
+def get_svg_overlay_data_uri():
+    col_xs = [
+        [25, 37, 49, 61],     # Kolom 1: Soal 1-10
+        [94, 106, 118, 130],  # Kolom 2: Soal 11-20
+        [163, 175, 187, 199], # Kolom 3: Soal 21-30
+        [232, 244, 256, 268]  # Kolom 4: Soal 31-40
+    ]
+    
+    # 10 baris vertikal untuk setiap kolom
+    row_ys = [118 + i * 27 for i in range(10)]
+    
+    circles = []
+    for col in col_xs:
+        for cx in col:
+            for cy in row_ys:
+                circles.append(f'<circle cx="{cx}" cy="{cy}" r="2.5"/>')
+                
+    circle_str = "".join(circles)
+    
+    svg_raw = f'''<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 300 420" width="100%" height="100%">
+    <rect x="10" y="8" width="280" height="52" fill="none" stroke="#00FF66" stroke-width="1.5" stroke-dasharray="4,4"/>
+    <text x="150" y="38" fill="#00FF66" font-size="11" font-family="sans-serif" text-anchor="middle" font-weight="bold">AREA IDENTITAS / HEADER</text>
+    <rect x="10" y="68" width="280" height="342" fill="none" stroke="#00FF66" stroke-width="1.5" stroke-dasharray="3,3"/>
+    <text x="150" y="86" fill="#00FF66" font-size="10" font-family="sans-serif" text-anchor="middle" font-weight="bold">SOAL 1 - 40 (A B C D)</text>
+    <g stroke="#00FF66" stroke-width="1" stroke-dasharray="2,2" fill="none" opacity="0.6">
+        <rect x="15" y="96" width="62" height="302"/>
+        <rect x="84" y="96" width="62" height="302"/>
+        <rect x="153" y="96" width="62" height="302"/>
+        <rect x="222" y="96" width="62" height="302"/>
+    </g>
+    <g fill="#00FF66" opacity="0.55">
+        {circle_str}
+    </g>
+    </svg>'''
+    
+    return urllib.parse.quote(svg_raw)
+
+svg_encoded = get_svg_overlay_data_uri()
+
+# ---------------------------------------------------------
+# CSS: FULL SCREEN KAMERA HP & OVERLAY BAYANG-BAYANG
+# ---------------------------------------------------------
+st.markdown(f"""
     <style>
-    /* Hilangkan padding default Streamlit agar kamera full layar di HP */
-    .main .block-container {
+    .main .block-container {{
         padding-top: 0.2rem !important;
         padding-bottom: 0.2rem !important;
         padding-left: 0.1rem !important;
         padding-right: 0.1rem !important;
         max-width: 100% !important;
-    }
+    }}
 
-    /* Container kamera full viewport height */
-    div[data-testid="stCameraInput"] {
+    div[data-testid="stCameraInput"] {{
         position: relative !important;
         width: 100% !important;
-        height: 78vh !important;
+        height: 80vh !important;
         border-radius: 16px !important;
         overflow: hidden !important;
         margin: 0 auto;
-    }
+    }}
 
-    div[data-testid="stCameraInput"] video {
+    div[data-testid="stCameraInput"] video {{
         width: 100% !important;
         height: 100% !important;
         object-fit: cover !important;
         border-radius: 16px !important;
-    }
+    }}
 
-    /* BINGKAI OVERLAY & BAYANG-BAYANG LJK + GRID PILIHAN GANDA */
-    div[data-testid="stCameraInput"]::after {
+    div[data-testid="stCameraInput"]::after {{
         content: "";
         position: absolute;
         top: 50%;
         left: 50%;
         transform: translate(-50%, -50%);
-        width: 90vw;
+        width: 92vw;
         max-width: 460px;
-        height: 72vh;
+        height: 74vh;
         border: 2px dashed #00FF66;
         border-radius: 12px;
-        box-shadow: 0 0 0 2000px rgba(0, 0, 0, 0.65); /* Bayang-bayang redup di luar LJK */
+        box-shadow: 0 0 0 2000px rgba(0, 0, 0, 0.65);
         pointer-events: none;
         z-index: 99;
-        
-        /* Gambar SVG Grid Pilihan Ganda & Header */
-        background-image: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 300 420" width="100%" height="100%"><rect x="10" y="10" width="280" height="60" fill="none" stroke="%2300FF66" stroke-width="1.5" stroke-dasharray="4,4"/><text x="150" y="45" fill="%2300FF66" font-size="11" font-family="sans-serif" text-anchor="middle" font-weight="bold">AREA HEADER / IDENTITAS</text><rect x="10" y="80" width="280" height="325" fill="none" stroke="%2300FF66" stroke-width="1.5" stroke-dasharray="3,3"/><text x="150" y="98" fill="%2300FF66" font-size="10" font-family="sans-serif" text-anchor="middle" font-weight="bold">PILGAND (A B C D)</text><g stroke="%2300FF66" stroke-width="1" stroke-dasharray="2,2" fill="none" opacity="0.6"><rect x="15" y="108" width="62" height="290"/><rect x="84" y="108" width="62" height="290"/><rect x="153" y="108" width="62" height="290"/><rect x="222" y="108" width="62" height="290"/></g><g fill="%2300FF66" opacity="0.4"><circle cx="35" cy="130" r="3"/><circle cx="47" cy="130" r="3"/><circle cx="59" cy="130" r="3"/><circle cx="71" cy="130" r="3"/><circle cx="35" cy="155" r="3"/><circle cx="47" cy="155" r="3"/><circle cx="59" cy="155" r="3"/><circle cx="71" cy="155" r="3"/><circle cx="104" cy="130" r="3"/><circle cx="116" cy="130" r="3"/><circle cx="128" cy="130" r="3"/><circle cx="140" cy="130" r="3"/><circle cx="173" cy="130" r="3"/><circle cx="185" cy="130" r="3"/><circle cx="197" cy="130" r="3"/><circle cx="209" cy="130" r="3"/><circle cx="242" cy="130" r="3"/><circle cx="254" cy="130" r="3"/><circle cx="266" cy="130" r="3"/><circle cx="278" cy="130" r="3"/></g></svg>');
+        background-image: url("data:image/svg+xml;utf8,{svg_encoded}");
         background-size: 96% 96%;
         background-position: center;
         background-repeat: no-repeat;
-    }
+    }}
 
-    footer {visibility: hidden;}
-    header {visibility: hidden;}
+    footer {{visibility: hidden;}}
+    header {{visibility: hidden;}}
     </style>
 """, unsafe_allow_html=True)
 
@@ -263,7 +301,7 @@ tab_cam, tab_file = st.tabs(["📷 Kamera HP Instan", "📁 Unggah File Gambar"]
 captured_file = None
 
 with tab_cam:
-    captured_file = st.camera_input("Arahkan LJK sesuai garis bayang-bayang di layar")
+    captured_file = st.camera_input("Arahkan LJK sesuai titik-titik hijau di layar")
 
 with tab_file:
     uploaded_file = st.file_uploader("Pilih gambar dari galeri", type=['jpg', 'jpeg', 'png'])
