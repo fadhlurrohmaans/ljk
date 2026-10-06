@@ -22,9 +22,11 @@ def pil_to_base64(pil_img):
     pil_img.save(buffered, format="JPEG")
     return "data:image/jpeg;base64," + base64.b64encode(buffered.getvalue()).decode()
 
-def adjust_image_position(img_np, shift_x, shift_y, target_w=800, target_h=1100):
+def adjust_image_with_anchor_offset(img_np, anchor_x, anchor_y, target_w=800, target_h=1100):
     resized_base = cv2.resize(img_np, (target_w, target_h))
-    M = np.float32([[1, 0, shift_x], [0, 1, shift_y]])
+    # Menggeser foto secara berlawanan arah dari pergeseran anchor
+    # agar posisi grid analisis OpenCV pas dengan anchor di layar canvas
+    M = np.float32([[1, 0, -anchor_x], [0, 1, -anchor_y]])
     shifted = cv2.warpAffine(resized_base, M, (target_w, target_h))
     return shifted
 
@@ -126,10 +128,10 @@ def process_evalbee_grid(warped_img, key_answers, total_q=40, sensitivity_delta=
 # ---------------------------------------------------------
 if 'num_questions' not in st.session_state:
     st.session_state['num_questions'] = 40
-if 'shift_x' not in st.session_state:
-    st.session_state['shift_x'] = 0
-if 'shift_y' not in st.session_state:
-    st.session_state['shift_y'] = 0
+if 'anchor_x' not in st.session_state:
+    st.session_state['anchor_x'] = 0
+if 'anchor_y' not in st.session_state:
+    st.session_state['anchor_y'] = 0
 
 st.title("🎯 Pemindai LJK SMP YPI")
 
@@ -184,7 +186,7 @@ num_questions = st.session_state['num_questions']
 key_dict = {i + 1: st.session_state['key_answers_list'][i] for i in range(num_questions)}
 
 # ---------------------------------------------------------
-# UPLOAD GAMBAR & CANVAS INTERAKTIF
+# UPLOAD GAMBAR & CANVAS GESER ANCHOR PG
 # ---------------------------------------------------------
 uploaded_file = st.file_uploader("📁 Upload foto LJK dari Galeri", type=['jpg', 'jpeg', 'png'])
 
@@ -199,20 +201,20 @@ if uploaded_file is not None:
 
     img_base64 = pil_to_base64(raw_pil)
 
-    st.markdown("### 🖱️ Klik & Tahan Mouse / Touchpad untuk Menggeser LJK")
-    st.caption("Posisikan bulatan LJK agar tepat berada di bawah titik-titik hijau.")
+    st.markdown("### 🎯 Klik & Tahan Mouse / Touchpad untuk Menggeser Anchor Grid PG")
+    st.caption("Geser kisi-kisi titik hijau hingga tepat berada di atas bulatan jawaban siswa.")
 
-    # CANVAS INTERAKTIF DENGAN MOUSE / TOUCHPAD DRAG
+    # CANVAS INTERAKTIF: ANCHOR DILENGKAPI GESER MOUSE/TOUCHPAD
     html_canvas_code = f"""
     <div style="display: flex; flex-direction: column; align-items: center; font-family: sans-serif;">
-        <canvas id="dragCanvas" width="400" height="550" style="border: 2px solid #00FF66; border-radius: 12px; cursor: grab; touch-action: none; background: #111;"></canvas>
+        <canvas id="dragAnchorCanvas" width="400" height="550" style="border: 2px solid #00FF66; border-radius: 12px; cursor: move; touch-action: none; background: #111;"></canvas>
         <div style="margin-top: 10px; color: #333; font-size: 14px;">
-            <b>Offset X:</b> <span id="lblX">0</span> px | <b>Offset Y:</b> <span id="lblY">0</span> px
+            <b>Pergeseran Anchor X:</b> <span id="lblX">0</span> px | <b>Pergeseran Anchor Y:</b> <span id="lblY">0</span> px
         </div>
     </div>
 
     <script>
-        const canvas = document.getElementById('dragCanvas');
+        const canvas = document.getElementById('dragAnchorCanvas');
         const ctx = canvas.getContext('2d');
         const lblX = document.getElementById('lblX');
         const lblY = document.getElementById('lblY');
@@ -222,8 +224,8 @@ if uploaded_file is not None:
 
         let isDragging = false;
         let startX = 0, startY = 0;
-        let offsetX = {st.session_state['shift_x']};
-        let offsetY = {st.session_state['shift_y']};
+        let anchorX = {st.session_state['anchor_x']};
+        let anchorY = {st.session_state['anchor_y']};
 
         img.onload = function() {{
             draw();
@@ -232,22 +234,25 @@ if uploaded_file is not None:
         function draw() {{
             ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-            // 1. Gambar foto LJK yang digeser
-            ctx.drawImage(img, offsetX, offsetY, canvas.width, canvas.height);
+            // 1. Gambar foto LJK TETAP (Static di posisi 0,0)
+            ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
 
-            // 2. Gambar Overlay Garis & Titik-Titik Hijau di Atasnya
+            // 2. Gambar ANCHOR GRID HIJAU yang DIGESER (anchorX, anchorY)
+            ctx.save();
+            ctx.translate(anchorX, anchorY);
+
             ctx.strokeStyle = "#00FF66";
             ctx.lineWidth = 2;
             ctx.setLineDash([4, 4]);
 
-            // Header Box
+            // Area Box Header
             ctx.strokeRect(15, 10, 370, 70);
 
-            // Area Jawaban
+            // Area Box Soal
             ctx.setLineDash([3, 3]);
             ctx.strokeRect(15, 90, 370, 440);
 
-            // Titik Bulatan A-B-C-D
+            // Titik Bulatan PG A-B-C-D
             ctx.setLineDash([]);
             ctx.fillStyle = "#00FF66";
             for (let col = 0; col < 4; col++) {{
@@ -256,47 +261,49 @@ if uploaded_file is not None:
                     let rowY = 125 + row * 38;
                     for (let opt = 0; opt < 4; opt++) {{
                         ctx.beginPath();
-                        ctx.arc(colX + opt * 18, rowY, 3, 0, 2 * Math.PI);
+                        ctx.arc(colX + opt * 18, rowY, 3.5, 0, 2 * Math.PI);
                         ctx.fill();
                     }}
                 }}
             }}
 
-            lblX.innerText = Math.round(offsetX);
-            lblY.innerText = Math.round(offsetY);
+            ctx.restore();
+
+            lblX.innerText = Math.round(anchorX);
+            lblY.innerText = Math.round(anchorY);
         }}
 
-        // EVENT MOUSE (Klik & Tahan / Touchpad)
+        // EVENT MOUSE DRAG (Klik & Tahan Mouse / Touchpad)
         canvas.addEventListener('mousedown', (e) => {{
             isDragging = true;
-            startX = e.clientX - offsetX;
-            startY = e.clientY - offsetY;
+            startX = e.clientX - anchorX;
+            startY = e.clientY - anchorY;
             canvas.style.cursor = 'grabbing';
         }});
 
         window.addEventListener('mousemove', (e) => {{
             if (!isDragging) return;
-            offsetX = e.clientX - startX;
-            offsetY = e.clientY - startY;
+            anchorX = e.clientX - startX;
+            anchorY = e.clientY - startY;
             draw();
         }});
 
         window.addEventListener('mouseup', () => {{
             isDragging = false;
-            canvas.style.cursor = 'grab';
+            canvas.style.cursor = 'move';
         }});
 
-        // EVENT TOUCHPAD / TOUCH SCREEN
+        // EVENT TOUCH (Layar Sentuh HP / Touchpad Gestures)
         canvas.addEventListener('touchstart', (e) => {{
             isDragging = true;
-            startX = e.touches[0].clientX - offsetX;
-            startY = e.touches[0].clientY - offsetY;
+            startX = e.touches[0].clientX - anchorX;
+            startY = e.touches[0].clientY - anchorY;
         }});
 
         canvas.addEventListener('touchmove', (e) => {{
             if (!isDragging) return;
-            offsetX = e.touches[0].clientX - startX;
-            offsetY = e.touches[0].clientY - startY;
+            anchorX = e.touches[0].clientX - startX;
+            anchorY = e.touches[0].clientY - startY;
             draw();
         }});
 
@@ -308,15 +315,21 @@ if uploaded_file is not None:
 
     components.html(html_canvas_code, height=610)
 
-    # Sinkronisasi Koordinat dengan Python
+    # Sinkronisasi Koordinat Anchor ke Python
     col1, col2 = st.columns(2)
     with col1:
-        st.session_state['shift_x'] = st.number_input("Atur Presisi X (Pixel)", value=st.session_state['shift_x'], step=2)
+        st.session_state['anchor_x'] = st.number_input("Sinkron Posisi Anchor X", value=st.session_state['anchor_x'], step=2)
     with col2:
-        st.session_state['shift_y'] = st.number_input("Atur Presisi Y (Pixel)", value=st.session_state['shift_y'], step=2)
+        st.session_state['anchor_y'] = st.number_input("Sinkron Posisi Anchor Y", value=st.session_state['anchor_y'], step=2)
 
     img_np = np.array(raw_pil.convert('RGB'))
-    processed_img = adjust_image_position(img_np, st.session_state['shift_x'] * 2, st.session_state['shift_y'] * 2)
+    
+    # Menyesuaikan koordinat gambar untuk pemrosesan OpenCV
+    processed_img = adjust_image_with_anchor_offset(
+        img_np, 
+        st.session_state['anchor_x'] * 2, 
+        st.session_state['anchor_y'] * 2
+    )
 
 # ---------------------------------------------------------
 # HASIL ANALISIS
