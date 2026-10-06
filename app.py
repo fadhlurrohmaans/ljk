@@ -9,7 +9,7 @@ from PIL import Image, ImageOps
 st.set_page_config(
     page_title="Scanner LJK Presisi - SMP YPI Pulogadung",
     layout="wide",
-    initial_sidebar_state="collapsed"  # Tertutup default agar tidak menutupi layar HP
+    initial_sidebar_state="collapsed"
 )
 
 # ---------------------------------------------------------
@@ -54,34 +54,51 @@ def get_svg_overlay_data_uri():
 svg_encoded = get_svg_overlay_data_uri()
 
 # ---------------------------------------------------------
+# PENGATURAN KUNCI JAWABAN & MODES
+# ---------------------------------------------------------
+if 'num_questions' not in st.session_state:
+    st.session_state['num_questions'] = 40
+
+st.title("🎯 Pemindai LJK SMP YPI")
+
+# Opsi Toggle Full Screen Kamera
+is_fullscreen = st.toggle("📱 Mode Kamera Full Screen (Layar Penuh)", value=False)
+
+# Pengaturan Dimensi CSS Dinamis berdasarkan Status Full Screen
+cam_height = "85vh" if is_fullscreen else "60vh"
+cam_max_h = "none" if is_fullscreen else "520px"
+overlay_h = "78vh" if is_fullscreen else "52vh"
+overlay_max_h = "none" if is_fullscreen else "440px"
+
+# ---------------------------------------------------------
 # CSS OPTIMASI RESPONSIF LAYAR HP ANDROID
 # ---------------------------------------------------------
 st.markdown(f"""
     <style>
     /* Padding ringkas untuk layar HP */
     .main .block-container {{
-        padding-top: 0.5rem !important;
+        padding-top: 0.2rem !important;
         padding-bottom: 1rem !important;
-        padding-left: 0.5rem !important;
-        padding-right: 0.5rem !important;
+        padding-left: 0.3rem !important;
+        padding-right: 0.3rem !important;
         max-width: 100% !important;
     }}
 
     /* Judul Aplikasi Ringkas di HP */
     h1 {{
-        font-size: 1.5rem !important;
+        font-size: 1.4rem !important;
         text-align: center;
-        margin-bottom: 0.5rem !important;
+        margin-bottom: 0.2rem !important;
     }}
 
-    /* Kamera Pas dengan Layar HP (Portrait-friendly) */
+    /* Kamera Pas dengan Layar HP (Dinamis Full Screen) */
     div[data-testid="stCameraInput"] {{
         position: relative !important;
         width: 100% !important;
-        max-width: 480px !important;
-        height: 60vh !important;
+        max-width: 500px !important;
+        height: {cam_height} !important;
         min-height: 380px !important;
-        max-height: 520px !important;
+        max-height: {cam_max_h} !important;
         border-radius: 16px !important;
         overflow: hidden !important;
         margin: 0 auto !important;
@@ -101,13 +118,13 @@ st.markdown(f"""
         top: 50%;
         left: 50%;
         transform: translate(-50%, -50%);
-        width: 88vw;
-        max-width: 380px;
-        height: 52vh;
-        max-height: 440px;
+        width: 92vw;
+        max-width: 420px;
+        height: {overlay_h};
+        max-height: {overlay_max_h};
         border: 2px dashed #00FF66;
         border-radius: 12px;
-        box-shadow: 0 0 0 2000px rgba(0, 0, 0, 0.6);
+        box-shadow: 0 0 0 2000px rgba(0, 0, 0, 0.65);
         pointer-events: none;
         z-index: 10;
         background-image: url("data:image/svg+xml;utf8,{svg_encoded}");
@@ -130,14 +147,6 @@ st.markdown(f"""
     #MainMenu {{visibility: hidden;}}
     </style>
 """, unsafe_allow_html=True)
-
-st.title("🎯 Pemindai LJK SMP YPI")
-
-# ---------------------------------------------------------
-# PENGATURAN KUNCI JAWABAN (DIRECT DI HALAMAN UTAMA HP)
-# ---------------------------------------------------------
-if 'num_questions' not in st.session_state:
-    st.session_state['num_questions'] = 40
 
 with st.expander("⚙️ **Atur Kunci Jawaban & Jumlah Soal**", expanded=False):
     num_questions = st.radio(
@@ -374,7 +383,6 @@ if captured_file is not None:
 
         st.markdown("---")
         
-        # Tampilan Ringkasan Nilai Ringkas untuk Layar HP
         st.metric(label="📊 NILAI AKHIR", value=f"{score:.1f}")
         st.info(f"**Jawaban Benar:** {correct_count} dari {num_questions} Soal")
 
