@@ -11,6 +11,52 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
+# ---------------------------------------------------------
+# CSS: ANCHOR & BAYANG-BAYANG OVERLAY PADA KAMERA
+# ---------------------------------------------------------
+st.markdown("""
+    <style>
+    /* Styling Container Kamera Streamlit */
+    div[data-testid="stCameraInput"] {
+        position: relative !important;
+        border-radius: 16px !important;
+        overflow: hidden !important;
+        max-width: 650px;
+        margin: 0 auto;
+    }
+
+    /* Bingkai Anchor & Efek Bayang-bayang di Luar Target */
+    div[data-testid="stCameraInput"]::after {
+        content: "📐 PAS-KAN LEMBAR LJK KE DALAM BINGKAI";
+        position: absolute;
+        top: 6%;
+        left: 6%;
+        width: 88%;
+        height: 78%;
+        border: 3px dashed #00FF66;
+        box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.55); /* Meredupkan area di luar LJK */
+        border-radius: 12px;
+        pointer-events: none; /* Tombol kamera tetap bisa diklik */
+        z-index: 99;
+        display: flex;
+        align-items: flex-start;
+        justify-content: center;
+        padding-top: 14px;
+        color: #00FF66;
+        font-weight: 700;
+        font-size: 13px;
+        letter-spacing: 1px;
+        text-shadow: 0 2px 4px rgba(0, 0, 0, 0.9);
+        box-sizing: border-box;
+    }
+
+    /* Menjaga rasio tampilan kamera */
+    div[data-testid="stCameraInput"] video {
+        border-radius: 16px !important;
+    }
+    </style>
+""", unsafe_allow_html=True)
+
 st.title("🎯 Pemindai LJK Presisi (Metode EvalBee)")
 st.caption("Pindai Instan Kamera Native HP + Auto Warp Perspective Alignment - SMP YPI Pulogadung")
 
@@ -95,7 +141,6 @@ def align_and_crop_sheet(image_bytes, target_w=800, target_h=1100):
         warped = cv2.warpPerspective(img_np, M, (target_w, target_h))
         return warped, True
     else:
-        # Fallback jika sudut kertas terpotong frame
         warped = cv2.resize(img_np, (target_w, target_h))
         return warped, False
 
@@ -107,12 +152,10 @@ def process_evalbee_grid(warped_img, key_answers, total_q=40, sensitivity_delta=
     gray = cv2.cvtColor(warped_img, cv2.COLOR_RGB2GRAY)
     _, binary = cv2.threshold(gray, 125, 255, cv2.THRESH_BINARY_INV)
 
-    # Koordinat Proposional Area Pilihan Ganda (28% - 58% Tinggi Kertas)
     y1_global = int(h * 0.28)
     y2_global = int(h * 0.58)
     row_h = (y2_global - y1_global) / 10.0
 
-    # Persentase Lebar 4 Kolom Soal (Q1-10, Q11-20, Q21-30, Q31-40)
     col_x_pcts = [
         (0.04, 0.25),
         (0.27, 0.48),
@@ -138,7 +181,6 @@ def process_evalbee_grid(warped_img, key_answers, total_q=40, sensitivity_delta=
         col_w = x2_col - x1_col
         sub_col_w = col_w / 5.0
 
-        # Non-aktifkan kolom 4 jika mode 30 soal
         if q_range[0] > total_q:
             cv2.rectangle(annotated, (x1_col, y1_global), (x2_col, y2_global), (200, 200, 200), -1)
             cv2.putText(annotated, "NON-AKTIF", (x1_col + 10, y1_global + 100),
@@ -204,14 +246,14 @@ def process_evalbee_grid(warped_img, key_answers, total_q=40, sensitivity_delta=
     return final_score, score_correct, results, annotated
 
 # ---------------------------------------------------------
-# INTERFACE UTAMA: KAMERA NATIVE HP & FILE UPLOAD
+# INTERFACE UTAMA
 # ---------------------------------------------------------
 tab_cam, tab_file = st.tabs(["📷 Kamera HP Instan", "📁 Unggah File Gambar"])
 
 captured_file = None
 
 with tab_cam:
-    captured_file = st.camera_input("Arahkan kamera ke LJK lalu sentuh tombol Ambil Foto")
+    captured_file = st.camera_input("Arahkan LJK sesuai bingkai di layar")
 
 with tab_file:
     uploaded_file = st.file_uploader("Pilih gambar dari galeri", type=['jpg', 'jpeg', 'png'])
@@ -220,10 +262,8 @@ with tab_file:
 
 if captured_file is not None:
     try:
-        # 1. Meluruskan Posisi LJK (Warp Perspective Ala EvalBee)
         warped_img, is_warped = align_and_crop_sheet(captured_file, target_w=800, target_h=1100)
 
-        # 2. Evaluasi Densitas Jawaban
         score, correct_count, results, annotated_img = process_evalbee_grid(
             warped_img, key_dict, num_questions, delta_thresh
         )
@@ -233,7 +273,6 @@ if captured_file is not None:
         else:
             st.info("ℹ️ Menggunakan Koreksi Grid Standar LJK SMP YPI.")
 
-        # Tampilan Hasil Visual
         col_v1, col_v2 = st.columns([1, 1])
 
         with col_v1:
