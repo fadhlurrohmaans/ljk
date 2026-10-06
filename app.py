@@ -1,5 +1,4 @@
 import io
-import urllib.parse
 import streamlit as st
 import cv2
 import numpy as np
@@ -7,67 +6,65 @@ import pandas as pd
 from PIL import Image, ImageOps
 
 st.set_page_config(
-    page_title="Scanner LJK Presisi - SMP YPI Pulogadung",
+    page_title="Scanner LJK ORB - SMP YPI Pulogadung",
     layout="wide",
     initial_sidebar_state="collapsed"
 )
 
 # ---------------------------------------------------------
-# FUNGSI DETEKSI ANCHOR DINAMIS (OPENCV AUTOMATIC OMR)
+# FUNGSI 1: ALIGNMENT BERBASIS TEMPLATE (ORB + HOMOGRAPHY)
 # ---------------------------------------------------------
-def order_points(pts):
-    rect = np.zeros((4, 2), dtype="float32")
-    s = pts.sum(axis=1)
-    rect[0] = pts[np.argmin(s)]       # Kiri-Atas
-    rect[2] = pts[np.argmax(s)]       # Kanan-Bawah
+def align_image_to_template(img_siswa_np, img_template_np, max_features=10000, keep_percent=0.2):
+    gray_siswa = cv2.cvtColor(img_siswa_np, cv2.COLOR_RGB2GRAY)
+    gray_template = cv2.cvtColor(img_template_np, cv2.COLOR_RGB2GRAY)
 
-    diff = np.diff(pts, axis=1)
-    rect[1] = pts[np.argmin(diff)]    # Kanan-Atas
-    rect[3] = pts[np.argmax(diff)]    # Kiri-Bawah
-    return rect
+    # Inisialisasi ORB (Pendeteksi Pola)
+    orb = cv2.ORB_create(max_features)
+    kps_siswa, des_siswa = orb.detectAndCompute(gray_siswa, None)
+    kps_template, des_template = orb.detectAndCompute(gray_template, None)
 
-def auto_detect_and_warp(img_np, target_w=800, target_h=1100):
-    gray = cv2.cvtColor(img_np, cv2.COLOR_RGB2GRAY)
-    blurred = cv2.GaussianBlur(gray, (5, 5), 0)
-    thresh = cv2.adaptiveThreshold(
-        blurred, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, 11, 2
-    )
+    if des_siswa is None or des_template is None:
+        return img_siswa_np, False
 
-    contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    contours = sorted(contours, key=cv2.contourArea, reverse=True)
+    # Pencocokan titik unik
+    matcher = cv2.DescriptorMatcher_create(cv2.DESCRIPTOR_MATCHER_BRUTEFORCE_HAMMING)
+    matches = matcher.match(des_siswa, des_template)
+    matches = sorted(matches, key=lambda x: x.distance)
 
-    detected_pts = None
-    for c in contours:
-        peri = cv2.arcLength(c, True)
-        approx = cv2.approxPolyDP(c, 0.02 * peri, True)
-        
-        # Cari kontur segi empat terbesar yang menutupi area LJK (>20% luas gambar)
-        if len(approx) == 4 and cv2.contourArea(c) > (img_np.shape[0] * img_np.shape[1] * 0.20):
-            detected_pts = approx.reshape(4, 2)
-            break
+    # Ambil persentase kecocokan terbaik
+    keep = int(len(matches) * keep_percent)
+    matches = matches[:keep]
 
-    if detected_pts is not None:
-        rect = order_points(detected_pts)
-        dst = np.array([
-            [0, 0],
-            [target_w - 1, 0],
-            [target_w - 1, target_h - 1],
-            [0, target_h - 1]
-        ], dtype="float32")
+    if len(matches) < 10:
+        return img_siswa_np, False
 
-        M = cv2.getPerspectiveTransform(rect, dst)
-        warped = cv2.warpPerspective(img_np, M, (target_w, target_h))
-        return warped, True, rect
+    pts_siswa = np.zeros((len(matches), 2), dtype="float32")
+    pts_template = np.zeros((len(matches), 2), dtype="float32")
+
+    for i, m in enumerate(matches):
+        pts_siswa[i] = kps_siswa[m.queryIdx].pt
+        pts_template[i] = kps_template[m.trainIdx].pt
+
+    # Hitung matriks Homography
+    H, mask = cv2.findHomography(pts_siswa, pts_template, method=cv2.RANSAC, ransacReprojThreshold=5.0)
+
+    if H is not None:
+        # Luruskan LJK Siswa agar ukurannya 100% sama dengan Template
+        h, w = img_template_np.shape[:2]
+        aligned_img = cv2.warpPerspective(img_siswa_np, H, (w, h))
+        return aligned_img, True
     
-    # Fallback jika kontur luar tidak ditemukan
-    return cv2.resize(img_np, (target_w, target_h)), False, None
+    return img_siswa_np, False
 
+# ---------------------------------------------------------
+# FUNGSI 2: PEMROSESAN GRID JAWABAN
+# ---------------------------------------------------------
 def process_evalbee_grid(warped_img, key_answers, total_q=40, sensitivity_delta=15):
     h, w, _ = warped_img.shape
     gray = cv2.cvtColor(warped_img, cv2.COLOR_RGB2GRAY)
     _, binary = cv2.threshold(gray, 125, 255, cv2.THRESH_BINARY_INV)
 
-    # Grid dinamis yang terukur presisi setelah dikalibrasi warp
+    # Area Pilihan Ganda berdasarkan proporsi Template
     y1_global = int(h * 0.28)
     y2_global = int(h * 0.58)
     row_h = (y2_global - y1_global) / 10.0
@@ -90,8 +87,7 @@ def process_evalbee_grid(warped_img, key_answers, total_q=40, sensitivity_delta=
             continue
 
         for r_idx, q_num in enumerate(q_range):
-            if q_num > total_q:
-                break
+            if q_num > total_q: break
 
             row_y1 = int(y1_global + (r_idx * row_h))
             densities = []
@@ -131,13 +127,10 @@ def process_evalbee_grid(warped_img, key_answers, total_q=40, sensitivity_delta=
         user_ans = detected_answers.get(q_num, "-")
         key_ans = key_answers.get(q_num, "A")
         is_correct = (user_ans == key_ans)
-        if is_correct:
-            score_correct += 1
+        if is_correct: score_correct += 1
 
         results.append({
-            "No": q_num,
-            "Siswa": user_ans,
-            "Kunci": key_ans,
+            "No": q_num, "Siswa": user_ans, "Kunci": key_ans,
             "Status": "✅ Benar" if is_correct else ("❌ Salah" if user_ans != "-" else "⚪ Kosong")
         })
 
@@ -145,18 +138,14 @@ def process_evalbee_grid(warped_img, key_answers, total_q=40, sensitivity_delta=
     return final_score, score_correct, results, annotated
 
 # ---------------------------------------------------------
-# SETUP STATE & KUNCI JAWABAN
+# SETUP STATE UI & PENGATURAN
 # ---------------------------------------------------------
-if 'num_questions' not in st.session_state:
-    st.session_state['num_questions'] = 40
+st.title("🎯 Pemindai LJK Otomatis (Metode Template)")
 
-st.title("🎯 Pemindai LJK Otomatis SMP YPI")
+if 'num_questions' not in st.session_state: st.session_state['num_questions'] = 40
 
 with st.expander("⚙️ **Atur Kunci Jawaban & Sensitivitas**", expanded=False):
-    num_questions = st.radio(
-        "Jumlah Soal:", options=[40, 30],
-        index=0 if st.session_state['num_questions'] == 40 else 1, horizontal=True
-    )
+    num_questions = st.radio("Jumlah Soal:", options=[40, 30], index=0 if st.session_state['num_questions'] == 40 else 1, horizontal=True)
     st.session_state['num_questions'] = num_questions
 
     if 'key_answers_list' not in st.session_state or len(st.session_state['key_answers_list']) != num_questions:
@@ -174,48 +163,61 @@ num_questions = st.session_state['num_questions']
 key_dict = {i + 1: st.session_state['key_answers_list'][i] for i in range(num_questions)}
 
 # ---------------------------------------------------------
-# INPUT GAMBAR & AUTO DETEKSI ANCHOR
+# UPLOAD TEMPLATE MASTER & LJK SISWA
 # ---------------------------------------------------------
-tab_cam, tab_file = st.tabs(["📷 Kamera Langsung", "📁 Upload Foto Kertas"])
-raw_image = None
+col1, col2 = st.columns(2)
 
-with tab_cam:
-    cam_file = st.camera_input("Foto Lembar LJK")
-    if cam_file is not None:
-        raw_image = Image.open(cam_file)
+with col1:
+    st.markdown("### 1. Upload Template Master LJK")
+    st.caption("Gunakan foto LJK Kosong yang sangat lurus sebagai acuan patokan.")
+    template_file = st.file_uploader("Upload Master", type=['jpg', 'jpeg', 'png'], key="template")
 
-with tab_file:
-    up_file = st.file_uploader("Upload Foto LJK dari Galeri", type=['jpg', 'jpeg', 'png'])
-    if up_file is not None:
-        raw_image = Image.open(up_file)
+with col2:
+    st.markdown("### 2. Upload LJK Siswa")
+    st.caption("Pastikan keseluruhan kertas LJK dan teks terekam di dalam foto.")
+    siswa_file = st.file_uploader("Upload LJK Jawaban", type=['jpg', 'jpeg', 'png'], key="siswa")
 
-if raw_image is not None:
+if template_file is not None and siswa_file is not None:
     try:
-        raw_image = ImageOps.exif_transpose(raw_image)
-    except Exception:
-        pass
+        # Load & Transpose Template
+        raw_template = Image.open(template_file)
+        raw_template = ImageOps.exif_transpose(raw_template)
+        # Standarisasi ukuran master ke resolusi ideal
+        raw_template = raw_template.resize((800, 1100))
+        img_template_np = np.array(raw_template.convert('RGB'))
 
-    img_np = np.array(raw_image.convert('RGB'))
-    
-    # Deteksi Otomatis & Alignment 4 Sudut LJK
-    warped_img, is_detected, detected_corners = auto_detect_and_warp(img_np)
+        # Load & Transpose Siswa
+        raw_siswa = Image.open(siswa_file)
+        raw_siswa = ImageOps.exif_transpose(raw_siswa)
+        img_siswa_np = np.array(raw_siswa.convert('RGB'))
 
-    if is_detected:
-        st.success("✅ **Anchor LJK Terdeteksi Otomatis!** Gambar berhasil diluruskan secara presisi.")
-    else:
-        st.warning("⚠️ Batas luar LJK tidak terdeteksi utuh. Menggunakan mode penyesuaian standar. Pastikan latar belakang kertas kontras (misal: kertas putih di atas meja gelap).")
+        # PROSES ALIGNMENT (Menyamakan perspektif siswa dengan master)
+        with st.spinner("Mencocokkan pola LJK..."):
+            aligned_img, is_aligned = align_image_to_template(img_siswa_np, img_template_np)
 
-    score, correct_count, results, annotated_img = process_evalbee_grid(
-        warped_img, key_dict, num_questions, delta_thresh
-    )
+        if is_aligned:
+            st.success("✅ Pola LJK Siswa berhasil disamakan dengan Template Master!")
+            
+            # Eksekusi Pembacaan Jawaban
+            score, correct_count, results, annotated_img = process_evalbee_grid(
+                aligned_img, key_dict, num_questions, delta_thresh
+            )
 
-    st.markdown("---")
-    st.metric(label="📊 NILAI AKHIR", value=f"{score:.1f}")
-    st.info(f"**Jawaban Benar:** {correct_count} dari {num_questions} Soal")
+            st.markdown("---")
+            st.metric(label="📊 NILAI AKHIR", value=f"{score:.1f}")
+            st.info(f"**Jawaban Benar:** {correct_count} dari {num_questions} Soal")
 
-    st.subheader("🔍 Hasil Deteksi Bulatan Jawaban")
-    st.image(annotated_img, use_container_width=True)
+            st.subheader("🔍 Hasil Deteksi (Sudah Diluruskan)")
+            st.image(annotated_img, use_container_width=True)
 
-    st.subheader("📋 Rincian Jawaban Per Nomor")
-    df_res = pd.DataFrame(results)
-    st.dataframe(df_res, height=350, use_container_width=True)
+            st.subheader("📋 Rincian Jawaban Per Nomor")
+            df_res = pd.DataFrame(results)
+            st.dataframe(df_res, height=350, use_container_width=True)
+        else:
+            st.error("❌ Gagal mencocokkan LJK. Pastikan foto siswa tidak terlalu blur dan format kertasnya persis dengan Master Template.")
+            st.image(img_siswa_np, caption="Foto LJK Siswa (Gagal Diproses)", width=400)
+
+    except Exception as e:
+        st.error(f"Terjadi kesalahan saat memproses gambar: {e}")
+elif template_file is None and siswa_file is not None:
+    st.warning("⚠️ Harap upload **Template Master LJK** terlebih dahulu di kolom sebelah kiri!")
