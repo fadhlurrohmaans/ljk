@@ -6,3 +6,4 @@ pillow
 streamlit-webrtc
 av
 streamlit-cropper
+streamlit-drawable-canvas
