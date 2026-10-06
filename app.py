@@ -54,7 +54,7 @@ def get_svg_overlay_data_uri():
 svg_encoded = get_svg_overlay_data_uri()
 
 # ---------------------------------------------------------
-# CSS: FULL SCREEN KAMERA HP & OVERLAY BAYANG-BAYANG
+# CSS PERBAIKAN TOTAL: Z-INDEX SIDEBAR & TOMBOL TOGGLE HP
 # ---------------------------------------------------------
 st.markdown(f"""
     <style>
@@ -66,10 +66,25 @@ st.markdown(f"""
         max-width: 100% !important;
     }}
 
+    /* MEMAKSA SIDEBAR DAN TOMBOL TOGGLE BERADA DI LAPISAN Paling ATAS */
+    section[data-testid="stSidebar"] {{
+        z-index: 999999 !important;
+    }}
+    
+    div[data-testid="stSidebarCollapsedControl"] {{
+        z-index: 999999 !important;
+        background-color: #00FF66 !important;
+        color: #000000 !important;
+        border-radius: 8px !important;
+        top: 12px !important;
+        left: 12px !important;
+        box-shadow: 0px 2px 8px rgba(0,0,0,0.5) !important;
+    }}
+
     div[data-testid="stCameraInput"] {{
         position: relative !important;
         width: 100% !important;
-        height: 78vh !important;
+        height: 75vh !important;
         border-radius: 16px !important;
         overflow: hidden !important;
         margin: 0 auto;
@@ -90,12 +105,12 @@ st.markdown(f"""
         transform: translate(-50%, -50%);
         width: 92vw;
         max-width: 460px;
-        height: 74vh;
+        height: 70vh;
         border: 2px dashed #00FF66;
         border-radius: 12px;
         box-shadow: 0 0 0 2000px rgba(0, 0, 0, 0.65);
         pointer-events: none;
-        z-index: 99;
+        z-index: 10;
         background-image: url("data:image/svg+xml;utf8,{svg_encoded}");
         background-size: 96% 96%;
         background-position: center;
@@ -103,70 +118,77 @@ st.markdown(f"""
     }}
 
     footer {{visibility: hidden;}}
-    header {{visibility: hidden;}}
+    #MainMenu {{visibility: hidden;}}
     </style>
 """, unsafe_allow_html=True)
 
 st.title("🎯 Pemindai LJK SMP YPI")
 
 # ---------------------------------------------------------
-# SIDEBAR: MODE SOAL & FITUR EDIT KUNCI JAWABAN
+# AKSI DUA ARAH: KONTROL KUNCI BISA VIA EXPANDER ATAU SIDEBAR
 # ---------------------------------------------------------
-st.sidebar.header("📋 Mode Pengerjaan")
-num_questions = st.sidebar.radio(
-    "Pilih Jumlah Soal:",
-    options=[40, 30],
-    index=0
-)
+if 'num_questions' not in st.session_state:
+    st.session_state['num_questions'] = 40
 
-st.sidebar.markdown("---")
-st.sidebar.header(f"⚙️ Kunci Jawaban ({num_questions} Soal)")
-
-# Inisialisasi Kunci Jawaban di Session State
-if 'key_answers_list' not in st.session_state or len(st.session_state['key_answers_list']) != num_questions:
-    st.session_state['key_answers_list'] = ['A'] * num_questions
-
-tab_edit1, tab_edit2 = st.sidebar.tabs(["⚡ Input Cepat", "📊 Tabel Edit"])
-
-with tab_edit1:
-    quick_string = "".join(st.session_state['key_answers_list'])
-    user_input = st.text_input(
-        f"Paste/Ketik {num_questions} Kunci (tanpa spasi):",
-        value=quick_string,
-        help="Contoh: ABCDABCDABCD..."
-    ).upper()
-    
-    cleaned_keys = [char for char in user_input if char in ['A', 'B', 'C', 'D']]
-    if len(cleaned_keys) == num_questions:
-        st.session_state['key_answers_list'] = cleaned_keys
-        st.success(f"✅ Kunci {num_questions} soal tersimpan!")
-    elif len(user_input) > 0:
-        st.warning(f"Kunci terdeteksi {len(cleaned_keys)}/{num_questions}. Pastikan huruf A, B, C, atau D.")
-
-with tab_edit2:
-    df_keys = pd.DataFrame({
-        "No": list(range(1, num_questions + 1)),
-        "Kunci": st.session_state['key_answers_list']
-    })
-    
-    edited_df = st.data_editor(
-        df_keys,
-        column_config={
-            "No": st.column_config.NumberColumn("No Soal", disabled=True),
-            "Kunci": st.column_config.SelectboxColumn("Jawaban", options=['A', 'B', 'C', 'D'], required=True)
-        },
-        hide_index=True,
-        use_container_width=True,
-        height=320
+# PENGATURAN HALAMAN UTAMA (Sangat berguna di Layar HP)
+with st.expander("⚙️ **PENGATURAN SOAL & KUNCI JAWABAN** (Klik di sini)", expanded=False):
+    num_questions = st.radio(
+        "Pilih Jumlah Soal:",
+        options=[40, 30],
+        index=0 if st.session_state['num_questions'] == 40 else 1,
+        horizontal=True
     )
-    st.session_state['key_answers_list'] = edited_df["Kunci"].tolist()
+    st.session_state['num_questions'] = num_questions
 
-# Mapping kunci jawaban dalam bentuk dictionary
+    if 'key_answers_list' not in st.session_state or len(st.session_state['key_answers_list']) != num_questions:
+        st.session_state['key_answers_list'] = ['A'] * num_questions
+
+    tab_edit1, tab_edit2 = st.tabs(["⚡ Input Cepat", "📊 Tabel Edit"])
+
+    with tab_edit1:
+        quick_string = "".join(st.session_state['key_answers_list'])
+        user_input = st.text_input(
+            f"Paste/Ketik {num_questions} Kunci (tanpa spasi):",
+            value=quick_string,
+            help="Contoh: ABCDABCDABCD..."
+        ).upper()
+        
+        cleaned_keys = [char for char in user_input if char in ['A', 'B', 'C', 'D']]
+        if len(cleaned_keys) == num_questions:
+            st.session_state['key_answers_list'] = cleaned_keys
+            st.success(f"✅ Kunci {num_questions} soal tersimpan!")
+        elif len(user_input) > 0:
+            st.warning(f"Kunci terdeteksi {len(cleaned_keys)}/{num_questions}. Pastikan huruf A, B, C, atau D.")
+
+    with tab_edit2:
+        df_keys = pd.DataFrame({
+            "No": list(range(1, num_questions + 1)),
+            "Kunci": st.session_state['key_answers_list']
+        })
+        
+        edited_df = st.data_editor(
+            df_keys,
+            column_config={
+                "No": st.column_config.NumberColumn("No Soal", disabled=True),
+                "Kunci": st.column_config.SelectboxColumn("Jawaban", options=['A', 'B', 'C', 'D'], required=True)
+            },
+            hide_index=True,
+            use_container_width=True,
+            height=260
+        )
+        st.session_state['key_answers_list'] = edited_df["Kunci"].tolist()
+
+    delta_thresh = st.slider("Sensitivitas Kehitaman Coretan", 5, 50, 15, 1)
+
+num_questions = st.session_state['num_questions']
 key_dict = {i + 1: st.session_state['key_answers_list'][i] for i in range(num_questions)}
 
+# PENGATURAN SIDEBAR (Tetap aktif sebagai opsi tambahan)
+st.sidebar.header("📋 Mode Pengerjaan")
+st.sidebar.write(f"Mode Aktif: **{num_questions} Soal**")
 st.sidebar.markdown("---")
-st.sidebar.header("🎛️ Sensitivitas Silang")
-delta_thresh = st.sidebar.slider("Sensitivitas Kehitaman Coretan", 5, 50, 15, 1)
+st.sidebar.header("⚙️ Kunci Jawaban Tersimpan")
+st.sidebar.text_area("Kunci Saat Ini:", value="".join(st.session_state['key_answers_list']), height=100, disabled=True)
 
 # ---------------------------------------------------------
 # METODE EVALBEE: WARP PERSPECTIVE 4 SUDUT KERTAS
