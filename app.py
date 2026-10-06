@@ -5,23 +5,21 @@ import pandas as pd
 from PIL import Image, ImageOps
 
 st.set_page_config(
-    page_title="Scanner LJK Presisi (Warping)",
+    page_title="Scanner LJK Presisi",
     layout="wide",
     initial_sidebar_state="collapsed"
 )
 
 # ---------------------------------------------------------
-# FUNGSI 1: AUTO-CROP & WARP PERSPECTIVE (Standar OMR)
+# FUNGSI 1: AUTO-WARP & PENANGANAN FILE UPLOAD (SCANNED)
 # ---------------------------------------------------------
 def auto_crop_and_warp(image_np):
     orig = image_np.copy()
+    h_orig, w_orig = orig.shape[:2]
     gray = cv2.cvtColor(image_np, cv2.COLOR_BGR2GRAY)
     blur = cv2.GaussianBlur(gray, (5, 5), 0)
     
-    # Mencari garis tepi (Edge Detection)
     edged = cv2.Canny(blur, 75, 200)
-
-    # Mencari semua kontur bidang
     cnts, _ = cv2.findContours(edged, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
     cnts = sorted(cnts, key=cv2.contourArea, reverse=True)[:5]
 
@@ -29,43 +27,29 @@ def auto_crop_and_warp(image_np):
         peri = cv2.arcLength(c, True)
         approx = cv2.approxPolyDP(c, 0.02 * peri, True)
         
-        # Jika ditemukan kontur segi empat (kertas/bingkai tabel besar)
-        if len(approx) == 4 and cv2.contourArea(c) > (image_np.shape[0]*image_np.shape[1]*0.2):
-            pts = approx.reshape(4, 2)
-            
-            # Urutkan sudut: Kiri Atas, Kanan Atas, Kanan Bawah, Kiri Bawah
-            rect = np.zeros((4, 2), dtype="float32")
-            s = pts.sum(axis=1)
-            rect[0] = pts[np.argmin(s)]
-            rect[2] = pts[np.argmax(s)]
-            diff = np.diff(pts, axis=1)
-            rect[1] = pts[np.argmin(diff)]
-            rect[3] = pts[np.argmax(diff)]
-            
-            # Paksakan gambar ditarik lurus ke resolusi standar 800x1100
-            dst = np.array([
-                [0, 0],
-                [799, 0],
-                [799, 1099],
-                [0, 1099]], dtype="float32")
-            
-            M = cv2.getPerspectiveTransform(rect, dst)
-            warped = cv2.warpPerspective(orig, M, (800, 1100))
-            return warped, True
+        # Cek apakah menemukan bentuk segi empat (kertas)
+        if len(approx) == 4:
+            area = cv2.contourArea(c)
+            # Jika luas kertas > 20% dari gambar tapi < 95% gambar (berarti ada latar belakang)
+            if (h_orig * w_orig * 0.2) < area < (h_orig * w_orig * 0.95):
+                pts = approx.reshape(4, 2)
+                rect = np.zeros((4, 2), dtype="float32")
+                s = pts.sum(axis=1)
+                rect[0] = pts[np.argmin(s)]
+                rect[2] = pts[np.argmax(s)]
+                diff = np.diff(pts, axis=1)
+                rect[1] = pts[np.argmin(diff)]
+                rect[3] = pts[np.argmax(diff)]
                 
-    # Fallback: Jika gagal menemukan tepi kertas, potong batas terluar tinta
-    _, thresh = cv2.threshold(blur, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
-    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (10, 10))
-    morph = cv2.dilate(thresh, kernel, iterations=2)
-    cnts_fb, _ = cv2.findContours(morph, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    
-    if cnts_fb:
-        c = max(cnts_fb, key=cv2.contourArea)
-        x, y, w, h = cv2.boundingRect(c)
-        cropped = orig[y:y+h, x:x+w]
-        return cv2.resize(cropped, (800, 1100)), False
-        
-    return cv2.resize(orig, (800, 1100)), False
+                dst = np.array([[0, 0], [799, 0], [799, 1099], [0, 1099]], dtype="float32")
+                M = cv2.getPerspectiveTransform(rect, dst)
+                warped = cv2.warpPerspective(orig, M, (800, 1100))
+                return warped, "Kertas Diluruskan (Auto-Warp)"
+                
+    # JIKA GAGAL / FILE UPLOAD SUDAH BERUPA SCAN KERTAS PENUH:
+    # Jangan potong marginnya, langsung ubah ukuran ke 800x1100 agar presisi
+    resized = cv2.resize(orig, (800, 1100))
+    return resized, "Resolusi Disesuaikan (Mode Scan Penuh)"
 
 # ---------------------------------------------------------
 # FUNGSI 2: PEMROSESAN GRID DENGAN KOORDINAT ABSOLUT
@@ -76,7 +60,6 @@ def process_grid_answers(warped_img, key_answers, config, total_q=40, sensitivit
     _, binary = cv2.threshold(gray, 125, 255, cv2.THRESH_BINARY_INV)
     annotated = warped_img.copy()
     
-    # Gunakan koordinat dari slider UI
     y1_global = int(h * config['y_start'])
     y2_global = int(h * config['y_end'])
     row_h = (y2_global - y1_global) / 10.0
@@ -91,7 +74,7 @@ def process_grid_answers(warped_img, key_answers, config, total_q=40, sensitivit
     for c_idx, q_range in enumerate(col_ranges):
         x1_col = int(w * col_starts[c_idx])
         x2_col = int(w * (col_starts[c_idx] + col_width))
-        sub_col_w = (x2_col - x1_col) / 5.0 # Dibagi 5 (No, A, B, C, D)
+        sub_col_w = (x2_col - x1_col) / 5.0 
 
         if q_range[0] > total_q:
             cv2.rectangle(annotated, (x1_col, y1_global), (x2_col, y2_global), (200, 200, 200), -1)
@@ -105,7 +88,6 @@ def process_grid_answers(warped_img, key_answers, config, total_q=40, sensitivit
             cell_coords = []
 
             for opt_idx in range(4):
-                # Ekstrak letak A, B, C, D
                 cx1 = int(x1_col + ((opt_idx + 1) * sub_col_w) + (sub_col_w * 0.15))
                 cx2 = int(x1_col + ((opt_idx + 2) * sub_col_w) - (sub_col_w * 0.15))
                 cy1 = int(row_y1 + (row_h * 0.15))
@@ -127,7 +109,6 @@ def process_grid_answers(warped_img, key_answers, config, total_q=40, sensitivit
 
             detected_answers[q_num] = selected_option
 
-            # Gambar visualisasi
             for opt_idx, (cx1, cy1, cx2, cy2) in enumerate(cell_coords):
                 if opt_idx == max_idx and selected_option != "-":
                     cv2.rectangle(annotated, (cx1, cy1), (cx2, cy2), (0, 255, 0), 2)
@@ -149,16 +130,12 @@ def process_grid_answers(warped_img, key_answers, config, total_q=40, sensitivit
     final_score = (score_correct / float(total_q)) * 100.0
     return final_score, score_correct, results, annotated
 
-# ---------------------------------------------------------
-# CSS PANDUAN KAMERA UI
-# ---------------------------------------------------------
 def get_camera_css():
     return """
     <style>
     [data-testid="stCameraInput"] { position: relative; }
     [data-testid="stCameraInput"]::before {
-        content: "";
-        position: absolute;
+        content: ""; position: absolute;
         top: 5%; left: 10%; width: 80%; height: 90%;
         border: 3px solid rgba(0, 255, 0, 0.7);
         z-index: 99; pointer-events: none;
@@ -177,12 +154,12 @@ def get_camera_css():
 # ---------------------------------------------------------
 # SETUP STATE UI & PENGATURAN
 # ---------------------------------------------------------
-st.title("🎯 Pemindai LJK Presisi (Mode Warping Kertas)")
-st.caption("Tanpa Template Master. Sistem otomatis mendeteksi kertas LJK dan meluruskannya layaknya Document Scanner.")
+st.title("🎯 Pemindai LJK Presisi (Mode Cerdas)")
+st.caption("Mendukung Scan Kamera maupun Upload File LJK (PDF/Scan Flatbed).")
 
 if 'num_questions' not in st.session_state: st.session_state['num_questions'] = 40
 
-with st.expander("⚙️ **Kunci Jawaban & Kalibrasi Grid (Setel Sekali Saja)**", expanded=False):
+with st.expander("⚙️ **Kunci Jawaban & Kalibrasi Grid (Geser jika kotak merah meleset)**", expanded=True):
     num_questions = st.radio("Jumlah Soal:", options=[40, 30], index=0 if st.session_state['num_questions'] == 40 else 1, horizontal=True)
     st.session_state['num_questions'] = num_questions
 
@@ -196,11 +173,11 @@ with st.expander("⚙️ **Kunci Jawaban & Kalibrasi Grid (Setel Sekali Saja)**"
         st.session_state['key_answers_list'] = cleaned_keys
 
     st.markdown("---")
-    st.markdown("**Kalibrasi Kotak Merah / Hijau (Otomatis Presisi Setelah Kertas Diluruskan)**")
+    st.markdown("**Kalibrasi Kotak Deteksi** (Gunakan pengaturan ini untuk mempaskan kotak merah/hijau ke huruf ABCD)")
     col_a, col_b = st.columns(2)
     with col_a:
-        y_start = st.slider("Batas Atas (Y Start)", 0.20, 0.40, 0.280, 0.005)
-        y_end = st.slider("Batas Bawah (Y End)", 0.40, 0.70, 0.580, 0.005)
+        y_start = st.slider("Batas Atas (Y Start)", 0.15, 0.40, 0.280, 0.005)
+        y_end = st.slider("Batas Bawah (Y End)", 0.40, 0.75, 0.580, 0.005)
         col_width = st.slider("Lebar Per Kolom", 0.10, 0.30, 0.210, 0.005)
     with col_b:
         x_col1 = st.slider("Kolom 1 (No 1-10)", 0.00, 0.20, 0.040, 0.005)
@@ -224,6 +201,7 @@ input_method = st.radio("Pilih sumber gambar:", ["Unggah File", "Kamera (Scan La
 
 siswa_file = None
 if input_method == "Unggah File":
+    st.info("💡 **Tips Upload:** Pastikan gambar berbentuk tegak lurus. Jika kotak deteksi kurang pas, sesuaikan slider 'Kalibrasi Kotak Deteksi' di menu atas.")
     siswa_file = st.file_uploader("Upload Foto LJK Siswa", type=['jpg', 'jpeg', 'png'])
 else:
     st.markdown(get_camera_css(), unsafe_allow_html=True)
@@ -235,15 +213,11 @@ if siswa_file is not None:
         raw_siswa = ImageOps.exif_transpose(raw_siswa)
         img_siswa_np = np.array(raw_siswa.convert('RGB'))
 
-        with st.spinner("Mendeteksi batas kertas dan meluruskan perspektif..."):
-            warped_img, is_warped = auto_crop_and_warp(img_siswa_np)
+        with st.spinner("Memproses gambar LJK..."):
+            warped_img, status_msg = auto_crop_and_warp(img_siswa_np)
         
-        if is_warped:
-            st.success("✅ Kertas LJK berhasil terdeteksi dan diluruskan (Auto-Warp)!")
-        else:
-            st.warning("⚠️ Batas luar kertas tidak terlihat jelas. Gambar dipotong mengikuti blok cetakan tinta terluar.")
+        st.success(f"✅ Status Pra-pemrosesan: {status_msg}")
 
-        # Proses pembacaan
         score, correct_count, results, annotated_img = process_grid_answers(
             warped_img, key_dict, grid_config, num_questions, delta_thresh
         )
@@ -259,8 +233,8 @@ if siswa_file is not None:
             st.dataframe(df_res, height=500, use_container_width=True)
             
         with col_res2:
-            st.subheader("🔍 Hasil Deteksi & Pemotongan Cerdas")
-            st.caption("Jika kotak deteksi masih tidak pas, buka menu 'Kalibrasi Grid' di bagian atas layar.")
+            st.subheader("🔍 Hasil Deteksi")
+            st.caption("Geser perlahan slider kalibrasi di atas jika kotak merah/hijau masih meleset dari abjad.")
             st.image(annotated_img, use_container_width=True)
 
     except Exception as e:
