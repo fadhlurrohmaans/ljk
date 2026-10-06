@@ -1,3 +1,5 @@
+import io
+import base64
 import streamlit as st
 import cv2
 import numpy as np
@@ -5,13 +7,13 @@ import pandas as pd
 from PIL import Image, ImageOps
 
 st.set_page_config(
-    page_title="Scanner LJK Presisi",
+    page_title="Scanner LJK Presisi (Anchor Dual-Point)",
     layout="wide",
     initial_sidebar_state="collapsed"
 )
 
 # ---------------------------------------------------------
-# FUNGSI 1: AUTO-WARP & PENANGANAN FILE UPLOAD (SCANNED)
+# FUNGSI 1: AUTO-WARP & PERSPECTIVE TRANSFORM
 # ---------------------------------------------------------
 def auto_crop_and_warp(image_np):
     orig = image_np.copy()
@@ -27,10 +29,8 @@ def auto_crop_and_warp(image_np):
         peri = cv2.arcLength(c, True)
         approx = cv2.approxPolyDP(c, 0.02 * peri, True)
         
-        # Cek apakah menemukan bentuk segi empat (kertas)
         if len(approx) == 4:
             area = cv2.contourArea(c)
-            # Jika luas kertas > 20% dari gambar tapi < 95% gambar (berarti ada latar belakang)
             if (h_orig * w_orig * 0.2) < area < (h_orig * w_orig * 0.95):
                 pts = approx.reshape(4, 2)
                 rect = np.zeros((4, 2), dtype="float32")
@@ -46,13 +46,11 @@ def auto_crop_and_warp(image_np):
                 warped = cv2.warpPerspective(orig, M, (800, 1100))
                 return warped, "Kertas Diluruskan (Auto-Warp)"
                 
-    # JIKA GAGAL / FILE UPLOAD SUDAH BERUPA SCAN KERTAS PENUH:
-    # Jangan potong marginnya, langsung ubah ukuran ke 800x1100 agar presisi
     resized = cv2.resize(orig, (800, 1100))
     return resized, "Resolusi Disesuaikan (Mode Scan Penuh)"
 
 # ---------------------------------------------------------
-# FUNGSI 2: PEMROSESAN GRID DENGAN KOORDINAT ABSOLUT
+# FUNGSI 2: PEMROSESAN GRID DENGAN ANCHOR NO.1-A & NO.40-D
 # ---------------------------------------------------------
 def process_grid_answers(warped_img, key_answers, config, total_q=40, sensitivity_delta=15):
     h, w, _ = warped_img.shape
@@ -109,11 +107,28 @@ def process_grid_answers(warped_img, key_answers, config, total_q=40, sensitivit
 
             detected_answers[q_num] = selected_option
 
+            # Visualisasi Jawaban Siswa
             for opt_idx, (cx1, cy1, cx2, cy2) in enumerate(cell_coords):
                 if opt_idx == max_idx and selected_option != "-":
                     cv2.rectangle(annotated, (cx1, cy1), (cx2, cy2), (0, 255, 0), 2)
                 else:
                     cv2.rectangle(annotated, (cx1, cy1), (cx2, cy2), (255, 0, 0), 1)
+
+                # --- ANCHOR KHUSUS NO. 1 OPTION A ---
+                if q_num == 1 and opt_idx == 0:
+                    center_x, center_y = (cx1 + cx2) // 2, (cy1 + cy2) // 2
+                    cv2.circle(annotated, (center_x, center_y), 14, (0, 255, 255), 2) # Lingkaran Kuning
+                    cv2.drawMarker(annotated, (center_x, center_y), (0, 255, 255), cv2.MARKER_CROSS, 20, 2)
+                    cv2.putText(annotated, "ANCHOR 1-A", (cx1 - 25, cy1 - 10), 
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 255, 255), 2)
+
+                # --- ANCHOR KHUSUS NO. 40 OPTION D ---
+                if q_num == 40 and opt_idx == 3:
+                    center_x, center_y = (cx1 + cx2) // 2, (cy1 + cy2) // 2
+                    cv2.circle(annotated, (center_x, center_y), 14, (0, 255, 255), 2) # Lingkaran Kuning
+                    cv2.drawMarker(annotated, (center_x, center_y), (0, 255, 255), cv2.MARKER_CROSS, 20, 2)
+                    cv2.putText(annotated, "ANCHOR 40-D", (cx1 - 30, cy2 + 20), 
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 255, 255), 2)
 
     score_correct = 0
     results = []
@@ -130,36 +145,105 @@ def process_grid_answers(warped_img, key_answers, config, total_q=40, sensitivit
     final_score = (score_correct / float(total_q)) * 100.0
     return final_score, score_correct, results, annotated
 
-def get_camera_css():
-    return """
+# ---------------------------------------------------------
+# FUNGSI 3: GENERATOR PANDUAN AR (SVG) KAMERA DENGAN ANCHOR
+# ---------------------------------------------------------
+def get_camera_guide_css(config, total_q=40):
+    w, h_img = 800, 1100
+    svg = f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {w} {h_img}">'
+    
+    # Anchor Sudut Kertas Outer Frame
+    svg += '<rect x="15" y="15" width="50" height="50" fill="none" stroke="#00FF00" stroke-width="3"/>'
+    svg += '<rect x="735" y="15" width="50" height="50" fill="none" stroke="#00FF00" stroke-width="3"/>'
+    svg += '<rect x="15" y="1035" width="50" height="50" fill="none" stroke="#00FF00" stroke-width="3"/>'
+    svg += '<rect x="735" y="1035" width="50" height="50" fill="none" stroke="#00FF00" stroke-width="3"/>'
+    
+    y1 = int(h_img * config['y_start'])
+    y2 = int(h_img * config['y_end'])
+    row_h = (y2 - y1) / 10.0
+    col_starts = [config['x_col1'], config['x_col2'], config['x_col3'], config['x_col4']]
+    col_width = config['col_width']
+
+    for c_idx, start_pct in enumerate(col_starts):
+        if (c_idx * 10) >= total_q: break
+        
+        x1 = w * start_pct
+        x2 = w * (start_pct + col_width)
+        col_w = x2 - x1
+        sub_col_w = col_w / 5.0
+        
+        # Garis Kolom
+        svg += f'<rect x="{x1}" y="{y1}" width="{col_w}" height="{row_h*10}" fill="none" stroke="#00FF00" stroke-width="1.5" stroke-dasharray="4,4" opacity="0.5"/>'
+        
+        for r in range(10):
+            q_num = c_idx * 10 + r + 1
+            if q_num > total_q: break
+            row_y = y1 + (r * row_h)
+            
+            for opt in range(4):
+                cx = x1 + ((opt + 1.5) * sub_col_w)
+                cy = row_y + (row_h / 2)
+                
+                # OPTION 1-A (ANCHOR ATAS-KIRI)
+                if q_num == 1 and opt == 0:
+                    svg += f'<circle cx="{cx}" cy="{cy}" r="14" fill="rgba(255,255,0,0.4)" stroke="#FFFF00" stroke-width="3"/>'
+                    svg += f'<line x1="{cx-20}" y1="{cy}" x2="{cx+20}" y2="{cy}" stroke="#FFFF00" stroke-width="2"/>'
+                    svg += f'<line x1="{cx}" y1="{cy-20}" x2="{cx}" y2="{cy+20}" stroke="#FFFF00" stroke-width="2"/>'
+                    svg += f'<text x="{cx-35}" y="{cy-22}" fill="#FFFF00" font-size="16" font-weight="bold">🎯 ANCHOR 1-A</text>'
+                
+                # OPTION 40-D (ANCHOR BAWAH-KANAN)
+                elif q_num == 40 and opt == 3:
+                    svg += f'<circle cx="{cx}" cy="{cy}" r="14" fill="rgba(255,255,0,0.4)" stroke="#FFFF00" stroke-width="3"/>'
+                    svg += f'<line x1="{cx-20}" y1="{cy}" x2="{cx+20}" y2="{cy}" stroke="#FFFF00" stroke-width="2"/>'
+                    svg += f'<line x1="{cx}" y1="{cy-20}" x2="{cx}" y2="{cy+20}" stroke="#FFFF00" stroke-width="2"/>'
+                    svg += f'<text x="{cx-45}" y="{cy+35}" fill="#FFFF00" font-size="16" font-weight="bold">🎯 ANCHOR 40-D</text>'
+                
+                else:
+                    svg += f'<circle cx="{cx}" cy="{cy}" r="5" fill="rgba(0,255,0,0.3)" stroke="#00FF00" stroke-width="1.5"/>'
+                
+    svg += '</svg>'
+    
+    b64_svg = base64.b64encode(svg.encode('utf-8')).decode('utf-8')
+    
+    css = f"""
     <style>
-    [data-testid="stCameraInput"] { position: relative; }
-    [data-testid="stCameraInput"]::before {
-        content: ""; position: absolute;
-        top: 5%; left: 10%; width: 80%; height: 90%;
-        border: 3px solid rgba(0, 255, 0, 0.7);
+    [data-testid="stCameraInput"] {{
+        position: relative;
+    }}
+    [data-testid="stCameraInput"]::before {{
+        content: "";
+        position: absolute;
+        top: 0; left: 0; right: 0; bottom: 0;
+        margin: auto; width: 100%; height: 100%;
+        background-image: url('data:image/svg+xml;base64,{b64_svg}');
+        background-size: contain;
+        background-position: center;
+        background-repeat: no-repeat;
+        z-index: 99;
+        pointer-events: none;
+        background-color: rgba(0,0,0,0.15);
+    }}
+    [data-testid="stCameraInput"]::after {{
+        content: "Paskan ANCHOR 1-A (Atas Kiri) & ANCHOR 40-D (Bawah Kanan)";
+        position: absolute; top: 10px; left: 0; width: 100%;
+        text-align: center; color: #FFFF00;
+        font-weight: bold; font-size: 15px;
         z-index: 99; pointer-events: none;
-        box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.4);
-    }
-    [data-testid="stCameraInput"]::after {
-        content: "Paskan Kertas LJK Penuh di Dalam Kotak Ini";
-        position: absolute; top: 2%; width: 100%;
-        text-align: center; color: #00FF00; font-weight: bold;
-        z-index: 99; pointer-events: none;
-        text-shadow: 1px 1px 2px #000;
-    }
+        text-shadow: 2px 2px 4px #000;
+    }}
     </style>
     """
+    return css
 
 # ---------------------------------------------------------
 # SETUP STATE UI & PENGATURAN
 # ---------------------------------------------------------
-st.title("🎯 Pemindai LJK Presisi (Mode Cerdas)")
-st.caption("Mendukung Scan Kamera maupun Upload File LJK (PDF/Scan Flatbed).")
+st.title("🎯 Pemindai LJK Presisi (Dual-Anchor System)")
+st.caption("Memakai patokan khusus pada No. 1 (A) & No. 40 (D) untuk akurasi pemindaian maksimal.")
 
 if 'num_questions' not in st.session_state: st.session_state['num_questions'] = 40
 
-with st.expander("⚙️ **Kunci Jawaban & Kalibrasi Grid (Geser jika kotak merah meleset)**", expanded=True):
+with st.expander("⚙️ **Kunci Jawaban & Kalibrasi Grid**", expanded=False):
     num_questions = st.radio("Jumlah Soal:", options=[40, 30], index=0 if st.session_state['num_questions'] == 40 else 1, horizontal=True)
     st.session_state['num_questions'] = num_questions
 
@@ -173,7 +257,7 @@ with st.expander("⚙️ **Kunci Jawaban & Kalibrasi Grid (Geser jika kotak mera
         st.session_state['key_answers_list'] = cleaned_keys
 
     st.markdown("---")
-    st.markdown("**Kalibrasi Kotak Deteksi** (Gunakan pengaturan ini untuk mempaskan kotak merah/hijau ke huruf ABCD)")
+    st.markdown("**Kalibrasi Posisi Grid**")
     col_a, col_b = st.columns(2)
     with col_a:
         y_start = st.slider("Batas Atas (Y Start)", 0.15, 0.40, 0.280, 0.005)
@@ -201,10 +285,11 @@ input_method = st.radio("Pilih sumber gambar:", ["Unggah File", "Kamera (Scan La
 
 siswa_file = None
 if input_method == "Unggah File":
-    st.info("💡 **Tips Upload:** Pastikan gambar berbentuk tegak lurus. Jika kotak deteksi kurang pas, sesuaikan slider 'Kalibrasi Kotak Deteksi' di menu atas.")
+    st.info("💡 **Petunjuk:** Perhatikan tanda **ANCHOR 1-A** dan **ANCHOR 40-D** berwarna kuning pada gambar hasil deteksi. Pastikan keduanya pas menimpa bulatan LJK.")
     siswa_file = st.file_uploader("Upload Foto LJK Siswa", type=['jpg', 'jpeg', 'png'])
 else:
-    st.markdown(get_camera_css(), unsafe_allow_html=True)
+    # Tampilkan overlay kamera AR dengan Anchor 1-A dan 40-D
+    st.markdown(get_camera_guide_css(grid_config, num_questions), unsafe_allow_html=True)
     siswa_file = st.camera_input("Ambil Foto")
 
 if siswa_file is not None:
@@ -228,13 +313,13 @@ if siswa_file is not None:
             st.metric(label="📊 NILAI AKHIR", value=f"{score:.1f}")
             st.info(f"**Benar:** {correct_count} dari {num_questions} Soal")
             
-            st.subheader("📋 Rincian")
+            st.subheader("📋 Rincian Jawaban")
             df_res = pd.DataFrame(results)
             st.dataframe(df_res, height=500, use_container_width=True)
             
         with col_res2:
-            st.subheader("🔍 Hasil Deteksi")
-            st.caption("Geser perlahan slider kalibrasi di atas jika kotak merah/hijau masih meleset dari abjad.")
+            st.subheader("🔍 Hasil Deteksi & Anchor Verification")
+            st.caption("Akurasi terjamin jika target kuning 'ANCHOR 1-A' (kiri atas) dan 'ANCHOR 40-D' (kanan bawah) tepat berada di atas bulatan LJK.")
             st.image(annotated_img, use_container_width=True)
 
     except Exception as e:
