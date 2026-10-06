@@ -9,7 +9,7 @@ from PIL import Image, ImageOps
 st.set_page_config(
     page_title="Scanner LJK Presisi - SMP YPI Pulogadung",
     layout="wide",
-    initial_sidebar_state="expanded"
+    initial_sidebar_state="collapsed"  # Tertutup default agar tidak menutupi layar HP
 )
 
 # ---------------------------------------------------------
@@ -54,40 +54,37 @@ def get_svg_overlay_data_uri():
 svg_encoded = get_svg_overlay_data_uri()
 
 # ---------------------------------------------------------
-# CSS PERBAIKAN TOTAL: Z-INDEX SIDEBAR & TOMBOL TOGGLE HP
+# CSS OPTIMASI RESPONSIF LAYAR HP ANDROID
 # ---------------------------------------------------------
 st.markdown(f"""
     <style>
+    /* Padding ringkas untuk layar HP */
     .main .block-container {{
-        padding-top: 0.2rem !important;
-        padding-bottom: 0.2rem !important;
-        padding-left: 0.1rem !important;
-        padding-right: 0.1rem !important;
+        padding-top: 0.5rem !important;
+        padding-bottom: 1rem !important;
+        padding-left: 0.5rem !important;
+        padding-right: 0.5rem !important;
         max-width: 100% !important;
     }}
 
-    /* MEMAKSA SIDEBAR DAN TOMBOL TOGGLE BERADA DI LAPISAN Paling ATAS */
-    section[data-testid="stSidebar"] {{
-        z-index: 999999 !important;
-    }}
-    
-    div[data-testid="stSidebarCollapsedControl"] {{
-        z-index: 999999 !important;
-        background-color: #00FF66 !important;
-        color: #000000 !important;
-        border-radius: 8px !important;
-        top: 12px !important;
-        left: 12px !important;
-        box-shadow: 0px 2px 8px rgba(0,0,0,0.5) !important;
+    /* Judul Aplikasi Ringkas di HP */
+    h1 {{
+        font-size: 1.5rem !important;
+        text-align: center;
+        margin-bottom: 0.5rem !important;
     }}
 
+    /* Kamera Pas dengan Layar HP (Portrait-friendly) */
     div[data-testid="stCameraInput"] {{
         position: relative !important;
         width: 100% !important;
-        height: 75vh !important;
+        max-width: 480px !important;
+        height: 60vh !important;
+        min-height: 380px !important;
+        max-height: 520px !important;
         border-radius: 16px !important;
         overflow: hidden !important;
-        margin: 0 auto;
+        margin: 0 auto !important;
     }}
 
     div[data-testid="stCameraInput"] video {{
@@ -97,26 +94,38 @@ st.markdown(f"""
         border-radius: 16px !important;
     }}
 
+    /* Bingkai Presisi LJK Layar Sentuh */
     div[data-testid="stCameraInput"]::after {{
         content: "";
         position: absolute;
         top: 50%;
         left: 50%;
         transform: translate(-50%, -50%);
-        width: 92vw;
-        max-width: 460px;
-        height: 70vh;
+        width: 88vw;
+        max-width: 380px;
+        height: 52vh;
+        max-height: 440px;
         border: 2px dashed #00FF66;
         border-radius: 12px;
-        box-shadow: 0 0 0 2000px rgba(0, 0, 0, 0.65);
+        box-shadow: 0 0 0 2000px rgba(0, 0, 0, 0.6);
         pointer-events: none;
         z-index: 10;
         background-image: url("data:image/svg+xml;utf8,{svg_encoded}");
-        background-size: 96% 96%;
+        background-size: contain;
         background-position: center;
         background-repeat: no-repeat;
     }}
 
+    /* Tombol & Input Ramah Sentuhan Jari HP */
+    .stButton button, .stDownloadButton button {{
+        width: 100% !important;
+        min-height: 46px !important;
+        font-size: 16px !important;
+        border-radius: 10px !important;
+        font-weight: bold !important;
+    }}
+
+    /* Sembunyikan Footer & Header Bawaan */
     footer {{visibility: hidden;}}
     #MainMenu {{visibility: hidden;}}
     </style>
@@ -125,15 +134,14 @@ st.markdown(f"""
 st.title("🎯 Pemindai LJK SMP YPI")
 
 # ---------------------------------------------------------
-# AKSI DUA ARAH: KONTROL KUNCI BISA VIA EXPANDER ATAU SIDEBAR
+# PENGATURAN KUNCI JAWABAN (DIRECT DI HALAMAN UTAMA HP)
 # ---------------------------------------------------------
 if 'num_questions' not in st.session_state:
     st.session_state['num_questions'] = 40
 
-# PENGATURAN HALAMAN UTAMA (Sangat berguna di Layar HP)
-with st.expander("⚙️ **PENGATURAN SOAL & KUNCI JAWABAN** (Klik di sini)", expanded=False):
+with st.expander("⚙️ **Atur Kunci Jawaban & Jumlah Soal**", expanded=False):
     num_questions = st.radio(
-        "Pilih Jumlah Soal:",
+        "Jumlah Soal:",
         options=[40, 30],
         index=0 if st.session_state['num_questions'] == 40 else 1,
         horizontal=True
@@ -148,9 +156,8 @@ with st.expander("⚙️ **PENGATURAN SOAL & KUNCI JAWABAN** (Klik di sini)", ex
     with tab_edit1:
         quick_string = "".join(st.session_state['key_answers_list'])
         user_input = st.text_input(
-            f"Paste/Ketik {num_questions} Kunci (tanpa spasi):",
-            value=quick_string,
-            help="Contoh: ABCDABCDABCD..."
+            f"Ketik {num_questions} Kunci (Contoh: ABCD...):",
+            value=quick_string
         ).upper()
         
         cleaned_keys = [char for char in user_input if char in ['A', 'B', 'C', 'D']]
@@ -158,7 +165,7 @@ with st.expander("⚙️ **PENGATURAN SOAL & KUNCI JAWABAN** (Klik di sini)", ex
             st.session_state['key_answers_list'] = cleaned_keys
             st.success(f"✅ Kunci {num_questions} soal tersimpan!")
         elif len(user_input) > 0:
-            st.warning(f"Kunci terdeteksi {len(cleaned_keys)}/{num_questions}. Pastikan huruf A, B, C, atau D.")
+            st.warning(f"Terdeteksi {len(cleaned_keys)}/{num_questions} kunci valid (A/B/C/D).")
 
     with tab_edit2:
         df_keys = pd.DataFrame({
@@ -169,29 +176,22 @@ with st.expander("⚙️ **PENGATURAN SOAL & KUNCI JAWABAN** (Klik di sini)", ex
         edited_df = st.data_editor(
             df_keys,
             column_config={
-                "No": st.column_config.NumberColumn("No Soal", disabled=True),
-                "Kunci": st.column_config.SelectboxColumn("Jawaban", options=['A', 'B', 'C', 'D'], required=True)
+                "No": st.column_config.NumberColumn("No", disabled=True),
+                "Kunci": st.column_config.SelectboxColumn("Kunci", options=['A', 'B', 'C', 'D'], required=True)
             },
             hide_index=True,
             use_container_width=True,
-            height=260
+            height=220
         )
         st.session_state['key_answers_list'] = edited_df["Kunci"].tolist()
 
-    delta_thresh = st.slider("Sensitivitas Kehitaman Coretan", 5, 50, 15, 1)
+    delta_thresh = st.slider("Sensitivitas Kehitaman Pensil", 5, 50, 15, 1)
 
 num_questions = st.session_state['num_questions']
 key_dict = {i + 1: st.session_state['key_answers_list'][i] for i in range(num_questions)}
 
-# PENGATURAN SIDEBAR (Tetap aktif sebagai opsi tambahan)
-st.sidebar.header("📋 Mode Pengerjaan")
-st.sidebar.write(f"Mode Aktif: **{num_questions} Soal**")
-st.sidebar.markdown("---")
-st.sidebar.header("⚙️ Kunci Jawaban Tersimpan")
-st.sidebar.text_area("Kunci Saat Ini:", value="".join(st.session_state['key_answers_list']), height=100, disabled=True)
-
 # ---------------------------------------------------------
-# METODE EVALBEE: WARP PERSPECTIVE 4 SUDUT KERTAS
+# FUNGSI ALIGNMENT & ALGORITMA EVALBEE
 # ---------------------------------------------------------
 def order_points(pts):
     rect = np.zeros((4, 2), dtype="float32")
@@ -250,9 +250,6 @@ def align_and_crop_sheet(image_bytes, target_w=800, target_h=1100):
         warped = cv2.resize(img_np, (target_w, target_h))
         return warped, False
 
-# ---------------------------------------------------------
-# FUNGSI EKSTRAKSI GRID PILIHAN GANDA
-# ---------------------------------------------------------
 def process_evalbee_grid(warped_img, key_answers, total_q=40, sensitivity_delta=15):
     h, w, _ = warped_img.shape
     gray = cv2.cvtColor(warped_img, cv2.COLOR_RGB2GRAY)
@@ -289,8 +286,6 @@ def process_evalbee_grid(warped_img, key_answers, total_q=40, sensitivity_delta=
 
         if q_range[0] > total_q:
             cv2.rectangle(annotated, (x1_col, y1_global), (x2_col, y2_global), (200, 200, 200), -1)
-            cv2.putText(annotated, "NON-AKTIF", (x1_col + 10, y1_global + 100),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (100, 100, 100), 1)
             continue
 
         for r_idx, q_num in enumerate(q_range):
@@ -343,8 +338,8 @@ def process_evalbee_grid(warped_img, key_answers, total_q=40, sensitivity_delta=
 
         results.append({
             "No": q_num,
-            "Jawaban Siswa": user_ans,
-            "Kunci Jawaban": key_ans,
+            "Siswa": user_ans,
+            "Kunci": key_ans,
             "Status": "✅ Benar" if is_correct else ("❌ Salah" if user_ans != "-" else "⚪ Kosong")
         })
 
@@ -352,20 +347,23 @@ def process_evalbee_grid(warped_img, key_answers, total_q=40, sensitivity_delta=
     return final_score, score_correct, results, annotated
 
 # ---------------------------------------------------------
-# INTERFACE UTAMA
+# TAB AMBIL GAMBAR
 # ---------------------------------------------------------
-tab_cam, tab_file = st.tabs(["📷 Kamera HP Instan", "📁 Unggah File Gambar"])
+tab_cam, tab_file = st.tabs(["📷 Ambil Foto LJK", "📁 Upload Galeri"])
 
 captured_file = None
 
 with tab_cam:
-    captured_file = st.camera_input("Arahkan LJK sesuai titik-titik hijau di layar")
+    captured_file = st.camera_input("Posisikan LJK di dalam garis hijau")
 
 with tab_file:
-    uploaded_file = st.file_uploader("Pilih gambar dari galeri", type=['jpg', 'jpeg', 'png'])
+    uploaded_file = st.file_uploader("Pilih foto LJK dari Galeri HP", type=['jpg', 'jpeg', 'png'])
     if uploaded_file is not None:
         captured_file = uploaded_file
 
+# ---------------------------------------------------------
+# TAMPILAN HASIL SCAN
+# ---------------------------------------------------------
 if captured_file is not None:
     try:
         warped_img, is_warped = align_and_crop_sheet(captured_file, target_w=800, target_h=1100)
@@ -374,24 +372,18 @@ if captured_file is not None:
             warped_img, key_dict, num_questions, delta_thresh
         )
 
-        if is_warped:
-            st.success("⚡ LJK Berhasil Diluruskan & Dipindai Presisi!")
-        else:
-            st.info("ℹ️ Menggunakan Koreksi Grid Standar LJK SMP YPI.")
+        st.markdown("---")
+        
+        # Tampilan Ringkasan Nilai Ringkas untuk Layar HP
+        st.metric(label="📊 NILAI AKHIR", value=f"{score:.1f}")
+        st.info(f"**Jawaban Benar:** {correct_count} dari {num_questions} Soal")
 
-        col_v1, col_v2 = st.columns([1, 1])
+        st.subheader("🔍 Hasil Analisis LJK")
+        st.image(annotated_img, use_container_width=True)
 
-        with col_v1:
-            st.subheader("🔍 Lembar Hasil Scan (Warped)")
-            st.image(annotated_img, use_container_width=True)
-
-        with col_v2:
-            st.subheader(f"📊 Rekapitulasi Nilai ({num_questions} Soal)")
-            st.metric("Nilai Akhir", f"{score:.1f}")
-            st.write(f"**Jumlah Benar:** {correct_count} dari {num_questions} Soal")
-            st.markdown("---")
-            df_res = pd.DataFrame(results)
-            st.dataframe(df_res, height=420, use_container_width=True)
+        st.subheader("📋 Rincian Jawaban Per Nomor")
+        df_res = pd.DataFrame(results)
+        st.dataframe(df_res, height=350, use_container_width=True)
 
     except Exception as e:
-        st.error(f"Gagal memproses gambar: {str(e)}")
+        st.error(f"Gagal memproses LJK: {str(e)}")
